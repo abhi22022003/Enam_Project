@@ -1,0 +1,67 @@
+@import "tailwindcss";
+
+@theme inline {
+  --color-bg: #0a0c0f;
+  --color-panel: #111419;
+  --color-panel-2: #171b21;
+  --color-line: #222831;
+  --color-ink: #e8eaed;
+  --color-muted: #8b94a1;
+  --color-faint: #5b6470;
+  --color-up: #35d08a;
+  --color-down: #ff6363;
+  --color-warn: #f5b84a;
+  --color-accent: #8ab4ff;
+  --color-crit: #ff7a59;
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+html,
+body {
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.num {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  scrollbar-width: none;
+}
+
+.shimmer {
+  background: linear-gradient(90deg, #171b21 0%, #20262e 50%, #171b21 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s infinite linear;
+}
+@keyframes shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+.fade-in {
+  animation: fade 0.25s ease-out;
+}
+@keyframes fade {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}

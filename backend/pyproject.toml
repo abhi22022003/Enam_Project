@@ -1,0 +1,21 @@
+[project]
+name = "finn-backend"
+version = "0.1.0"
+description = "FINN: financial investment agent (push digest + pull research) backend"
+requires-python = ">=3.12"
+dependencies = [
+    "beautifulsoup4>=4.15.0",
+    "fastapi>=0.162.2",
+    "httpx>=0.28.1",
+    "lxml>=6.1.3",
+    "pandas>=3.1.1",
+    "pydantic>=2.14.3",
+    "pymupdf>=2.1",
+    "python-dotenv>=1.2.4",
+    "rank-bm25>=0.2.2",
+    "uvicorn[standard]>=0.54.0",
+    "yfinance>=1.8.0",
+]
+
+[tool.uv]
+package = false

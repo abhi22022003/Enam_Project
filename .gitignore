@@ -1,0 +1,14 @@
+.DS_Store
+*.pdf
+!docs/**/*.pdf
+
+backend/.venv/
+backend/.cache/
+backend/.env
+__pycache__/
+*.pyc
+
+frontend/node_modules/
+frontend/.next/
+frontend/tsconfig.tsbuildinfo
+frontend/.env*.local
