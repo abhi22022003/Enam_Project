@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { api, Meta } from "@/lib/api";
+import { checkAndNotify } from "@/lib/notify";
 import { useSettings } from "@/lib/settings";
 import BriefView from "./BriefView";
 import ResearchView from "./research/ResearchView";
@@ -56,10 +57,24 @@ export default function App() {
   const hash = useSyncExternalStore(subscribeHash, () => window.location.hash, () => "");
   const { tab, symbol } = parseHash(hash);
   const [meta, setMeta] = useState<Meta | null>(null);
+  const names = useMemo(() => new Map((meta?.portfolio ?? []).map((p) => [p.symbol, p.name])), [meta]);
 
   useEffect(() => {
     api.meta().then(setMeta).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (!settings.notify) return;
+    const run = () => checkAndNotify(settings, names).catch(() => {});
+    run();
+    const id = setInterval(run, 10 * 60 * 1000);
+    const onVisible = () => document.visibilityState === "visible" && run();
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [settings, names]);
 
   const go = (t: Tab, s: string | null = null) => {
     window.location.hash = t === "research" && s ? `#research/${encodeURIComponent(s)}` : `#${t}`;
@@ -79,7 +94,7 @@ export default function App() {
       </div>
 
       <main className="px-4 pt-2 pb-[calc(96px+env(safe-area-inset-bottom))]">
-        {loaded && tab === "brief" && <BriefView settings={settings} onSettings={update} onResearch={(s) => go("research", s)} />}
+        {loaded && tab === "brief" && <BriefView settings={settings} onSettings={update} onResearch={(s) => go("research", s)} names={names} />}
         {tab === "research" && (
           <ResearchView symbol={symbol} onSymbol={(s) => go("research", s)} portfolio={portfolio} demo={meta?.research_demo ?? []} llm={meta?.llm ?? false} />
         )}

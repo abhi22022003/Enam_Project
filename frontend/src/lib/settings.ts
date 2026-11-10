@@ -7,6 +7,7 @@ export type Settings = {
   volX: number;
   movePct: number;
   window: string;
+  notify: boolean;
 };
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -14,6 +15,7 @@ export const DEFAULT_SETTINGS: Settings = {
   volX: 2,
   movePct: 4,
   window: "24h",
+  notify: false,
 };
 
 const KEY = "finn.settings.v1";

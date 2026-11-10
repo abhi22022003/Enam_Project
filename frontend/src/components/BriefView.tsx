@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api, Digest, MarketAlert, Story } from "@/lib/api";
+import { buildBrief, estimateSeconds, Line, pickVoice } from "@/lib/brief";
 import { ago, greeting, pct, shortDate, tone } from "@/lib/format";
+import { doneStories, lastSeen } from "@/lib/local";
 import { Settings } from "@/lib/settings";
 import { CategoryTag, StoryCard } from "./cards";
 import { ErrorNote, Skeleton } from "./ui";
@@ -14,42 +16,43 @@ const WINDOWS = [
   { id: "30d", label: "30D" },
 ];
 
+type Mode = { kind: "since"; since: string } | { kind: "window" } | { kind: "custom"; start: string; end: string };
+
 function WindowPicker({
+  mode,
   value,
-  custom,
-  onChange,
+  since,
+  onWindow,
+  onSince,
   onCustom,
 }: {
+  mode: Mode;
   value: string;
-  custom: { start: string; end: string } | null;
-  onChange: (w: string) => void;
-  onCustom: (c: { start: string; end: string } | null) => void;
+  since: string | null;
+  onWindow: (w: string) => void;
+  onSince: () => void;
+  onCustom: (start: string, end: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const today = new Date().toISOString().slice(0, 10);
-  const [start, setStart] = useState(() => custom?.start ?? new Date(Date.now() - 14 * 864e5).toISOString().slice(0, 10));
-  const [end, setEnd] = useState(custom?.end ?? today);
+  const [start, setStart] = useState(() => new Date(Date.now() - 14 * 864e5).toISOString().slice(0, 10));
+  const [end, setEnd] = useState(today);
+  const chip = (active: boolean) => `flex-1 rounded-md py-1.5 text-[12px] font-medium transition ${active ? "bg-panel-2 text-ink shadow" : "text-muted"}`;
   return (
     <div>
       <div className="flex gap-1 rounded-lg bg-panel p-1">
+        {since && (
+          <button onClick={onSince} className={chip(mode.kind === "since")} title={`Since ${new Date(since).toLocaleString("en-IN")}`}>
+            New
+          </button>
+        )}
         {WINDOWS.map((w) => (
-          <button
-            key={w.id}
-            onClick={() => {
-              onCustom(null);
-              setOpen(false);
-              onChange(w.id);
-            }}
-            className={`flex-1 rounded-md py-1.5 text-[12px] font-medium transition ${!custom && value === w.id ? "bg-panel-2 text-ink shadow" : "text-muted"}`}
-          >
+          <button key={w.id} onClick={() => (setOpen(false), onWindow(w.id))} className={chip(mode.kind === "window" && value === w.id)}>
             {w.label}
           </button>
         ))}
-        <button
-          onClick={() => setOpen((o) => !o)}
-          className={`flex-1 rounded-md py-1.5 text-[12px] font-medium ${custom ? "bg-panel-2 text-ink" : "text-muted"}`}
-        >
-          {custom ? `${shortDate(custom.start)}–${shortDate(custom.end)}` : "Custom"}
+        <button onClick={() => setOpen((o) => !o)} className={chip(mode.kind === "custom")}>
+          {mode.kind === "custom" ? `${shortDate(mode.start)}–${shortDate(mode.end)}` : "Custom"}
         </button>
       </div>
       {open && (
@@ -62,13 +65,7 @@ function WindowPicker({
             To
             <input type="date" value={end} max={today} onChange={(e) => setEnd(e.target.value)} className="rounded bg-panel-2 px-2 py-1 text-ink [color-scheme:dark]" />
           </label>
-          <button
-            onClick={() => {
-              onCustom({ start, end });
-              setOpen(false);
-            }}
-            className="rounded-md bg-accent px-3 py-1.5 font-medium text-bg"
-          >
+          <button onClick={() => (onCustom(start, end), setOpen(false))} className="rounded-md bg-accent px-3 py-1.5 font-medium text-bg">
             Apply
           </button>
         </div>
@@ -107,13 +104,80 @@ function MoveCard({ a, onStory, onResearch }: { a: MarketAlert; onStory: (id: st
   );
 }
 
-export default function BriefView({ settings, onSettings, onResearch }: { settings: Settings; onSettings: (p: Partial<Settings>) => void; onResearch: (s: string) => void }) {
-  const [custom, setCustom] = useState<{ start: string; end: string } | null>(null);
+function useSpeech(lines: Line[], onLine: (l: Line | null) => void) {
+  const [index, setIndex] = useState<number | null>(null);
+  const cancelled = useRef(false);
+  const supported = typeof window !== "undefined" && "speechSynthesis" in window;
+
+  const stop = () => {
+    cancelled.current = true;
+    window.speechSynthesis?.cancel();
+    setIndex(null);
+    onLine(null);
+  };
+
+  const play = () => {
+    if (!supported || !lines.length) return;
+    window.speechSynthesis.cancel();
+    cancelled.current = false;
+    const voice = pickVoice();
+    const speak = (i: number) => {
+      if (cancelled.current || i >= lines.length) {
+        setIndex(null);
+        onLine(null);
+        return;
+      }
+      setIndex(i);
+      onLine(lines[i]);
+      const u = new SpeechSynthesisUtterance(lines[i].text);
+      if (voice) u.voice = voice;
+      u.rate = 1.04;
+      u.onend = () => speak(i + 1);
+      u.onerror = () => speak(i + 1);
+      window.speechSynthesis.speak(u);
+    };
+    speak(0);
+  };
+
+  useEffect(() => () => window.speechSynthesis?.cancel(), []);
+  return { supported, playing: index !== null, index, play, stop };
+}
+
+export default function BriefView({
+  settings,
+  onSettings,
+  onResearch,
+  names,
+}: {
+  settings: Settings;
+  onSettings: (p: Partial<Settings>) => void;
+  onResearch: (s: string) => void;
+  names: Map<string, string>;
+}) {
+  const [visit] = useState(() => {
+    const prev = lastSeen.get();
+    const age = prev ? Date.now() - new Date(prev).getTime() : null;
+    return { since: age != null && age > 3600e3 ? prev : null, recent: age != null && age > 3600e3 && age < 7 * 864e5 };
+  });
+  const sinceEligible = visit.since;
+  const [mode, setMode] = useState<Mode>(() => (visit.recent && visit.since ? { kind: "since", since: visit.since } : { kind: "window" }));
+  const [done, setDone] = useState<Set<string>>(() => doneStories.get());
   const [showRoutine, setShowRoutine] = useState(false);
+  const [showDone, setShowDone] = useState(false);
   const [nonce, setNonce] = useState(0);
+  const [reading, setReading] = useState<Line | null>(null);
+
   const params = useMemo(
-    () => ({ window: settings.window, start: custom?.start, end: custom?.end, interests: settings.interests, volX: settings.volX, movePct: settings.movePct }),
-    [settings.window, settings.interests, settings.volX, settings.movePct, custom],
+    () => ({
+      window: settings.window,
+      since: mode.kind === "since" ? mode.since : undefined,
+      start: mode.kind === "custom" ? mode.start : undefined,
+      end: mode.kind === "custom" ? mode.end : undefined,
+      interests: settings.interests,
+      volX: settings.volX,
+      movePct: settings.movePct,
+    }),
+    [settings.window, settings.interests, settings.volX, settings.movePct, mode],
   );
   const key = `${JSON.stringify(params)}|${nonce}`;
   const [res, setRes] = useState<{ key: string; data?: Digest; error?: string } | null>(null);
@@ -122,7 +186,11 @@ export default function BriefView({ settings, onSettings, onResearch }: { settin
     let alive = true;
     api
       .digest(params)
-      .then((d) => alive && setRes({ key, data: d }))
+      .then((d) => {
+        if (!alive) return;
+        setRes({ key, data: d });
+        lastSeen.touch();
+      })
       .catch((e) => alive && setRes({ key, error: e.message || "Could not load the digest" }));
     return () => {
       alive = false;
@@ -132,29 +200,86 @@ export default function BriefView({ settings, onSettings, onResearch }: { settin
   const loading = res?.key !== key;
   const data = res?.data ?? null;
   const error = !loading ? (res?.error ?? null) : null;
-  const load = () => setNonce((n) => n + 1);
+
+  const windowLabel =
+    mode.kind === "since"
+      ? "since your last visit"
+      : mode.kind === "custom"
+        ? "in this period"
+        : settings.window === "24h"
+          ? "since yesterday"
+          : `in the last ${settings.window.replace("d", " days")}`;
 
   const alertedStories = useMemo(() => new Set(data?.alerts.filter((a) => a.kind === "filing").map((a) => (a as { story_id: string }).story_id)), [data]);
   const moves = (data?.alerts.filter((a) => a.kind === "market") ?? []) as MarketAlert[];
+  const open = data?.stories.filter((s) => !done.has(s.id)) ?? [];
+  const cleared = data?.stories.filter((s) => done.has(s.id)) ?? [];
+  const critical = open.filter((s) => s.tier === "critical");
+  const notable = open.filter((s) => s.tier === "notable");
+
+  const lines = useMemo(() => (data ? buildBrief(data, names, windowLabel, done) : []), [data, names, windowLabel, done]);
+  const speech = useSpeech(lines, (l) => {
+    setReading(l);
+    if (l?.storyId) document.getElementById(`story-${l.storyId}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+  });
 
   const scrollToStory = (id: string) => document.getElementById(`story-${id}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+  const markDone = (id: string) => {
+    doneStories.add([id]);
+    setDone(doneStories.get());
+  };
+  const restore = (id: string) => {
+    doneStories.remove(id);
+    setDone(doneStories.get());
+  };
 
-  const critical = data?.stories.filter((s) => s.tier === "critical") ?? [];
-  const notable = data?.stories.filter((s) => s.tier === "notable") ?? [];
-  const windowLabel = custom ? "in this period" : settings.window === "24h" ? "since yesterday" : `in the last ${settings.window.replace("d", " days")}`;
+  const card = (s: Story, alerted: boolean) => (
+    <div id={`story-${s.id}`} key={s.id}>
+      <StoryCard story={s} alerted={alerted} onResearch={onResearch} onDone={() => markDone(s.id)} highlight={reading?.storyId === s.id} />
+    </div>
+  );
 
   return (
     <div className="space-y-5">
       <header className="space-y-3">
         <div>
-          <p className="text-[12px] text-faint">{greeting()}</p>
+          <div className="flex items-center justify-between">
+            <p className="text-[12px] text-faint">{greeting()}</p>
+            {data && !loading && speech.supported && lines.length > 1 && (
+              <button
+                onClick={speech.playing ? speech.stop : speech.play}
+                className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-[12px] font-medium ${speech.playing ? "bg-accent text-bg" : "bg-panel text-ink"}`}
+              >
+                {speech.playing ? (
+                  <>
+                    <span className="inline-block h-2 w-2 rounded-sm bg-bg" /> Stop
+                  </>
+                ) : (
+                  <>
+                    <svg viewBox="0 0 12 12" className="h-2.5 w-2.5 fill-current">
+                      <path d="M2 1l9 5-9 5z" />
+                    </svg>
+                    Listen · {estimateSeconds(lines)}s
+                  </>
+                )}
+              </button>
+            )}
+          </div>
           {data && !loading ? (
             <h1 className="mt-0.5 text-[22px] font-semibold leading-tight tracking-tight">
-              {data.counts.critical + data.counts.notable === 0 ? (
-                <>Nothing needs you {windowLabel}.</>
+              {critical.length + notable.length === 0 ? (
+                cleared.length ? (
+                  <>
+                    You&apos;re clear. <span className="text-muted">Nothing left {windowLabel}.</span>
+                  </>
+                ) : (
+                  <>Nothing needs you {windowLabel}.</>
+                )
               ) : (
                 <>
-                  <span className="text-ink">{data.counts.critical + data.counts.notable} things</span>{" "}
+                  <span className="text-ink">
+                    {critical.length + notable.length} thing{critical.length + notable.length > 1 ? "s" : ""}
+                  </span>{" "}
                   <span className="text-muted">matter {windowLabel}.</span>
                 </>
               )}
@@ -164,20 +289,40 @@ export default function BriefView({ settings, onSettings, onResearch }: { settin
           )}
           {data && !loading && (
             <p className="mt-1 text-[12px] text-faint">
-              FINN read <span className="num text-muted">{data.counts.filings}</span> filings across 18 holdings
+              FINN read <span className="num text-muted">{data.counts.filings}</span> filings across {names.size || 18} holdings
               {data.counts.routine_filings > 0 && (
                 <>
-                  {" "}and set aside <span className="num text-muted">{data.counts.routine_filings}</span> as routine
+                  {" "}
+                  and set aside <span className="num text-muted">{data.counts.routine_filings}</span> as routine
                 </>
               )}
               .
             </p>
           )}
         </div>
-        <WindowPicker value={settings.window} custom={custom} onChange={(w) => onSettings({ window: w })} onCustom={setCustom} />
+        <WindowPicker
+          mode={mode}
+          value={settings.window}
+          since={sinceEligible}
+          onSince={() => sinceEligible && setMode({ kind: "since", since: sinceEligible })}
+          onWindow={(w) => {
+            setMode({ kind: "window" });
+            onSettings({ window: w });
+          }}
+          onCustom={(start, end) => setMode({ kind: "custom", start, end })}
+        />
       </header>
 
-      {error && <ErrorNote message={error} onRetry={load} />}
+      {speech.playing && reading && (
+        <div className="fade-in sticky top-12 z-10 rounded-xl border border-accent/40 bg-panel-2/95 px-3 py-2 text-[12.5px] leading-snug backdrop-blur">
+          <span className="mr-1.5 text-[10px] font-semibold uppercase tracking-widest text-accent">
+            {(speech.index ?? 0) + 1}/{lines.length}
+          </span>
+          {reading.text}
+        </div>
+      )}
+
+      {error && <ErrorNote message={error} onRetry={() => setNonce((n) => n + 1)} />}
 
       {loading && (
         <div className="space-y-3">
@@ -208,22 +353,36 @@ export default function BriefView({ settings, onSettings, onResearch }: { settin
           {critical.length > 0 && (
             <section className="space-y-2.5">
               <h2 className="text-[11px] font-semibold uppercase tracking-widest text-crit">Needs your attention</h2>
-              {critical.map((s) => (
-                <div id={`story-${s.id}`} key={s.id}>
-                  <StoryCard story={s} alerted={alertedStories.has(s.id)} onResearch={onResearch} />
-                </div>
-              ))}
+              {critical.map((s) => card(s, alertedStories.has(s.id)))}
             </section>
           )}
 
           {notable.length > 0 && (
             <section className="space-y-2">
               <h2 className="text-[11px] font-semibold uppercase tracking-widest text-faint">Worth knowing</h2>
-              {notable.map((s) => (
-                <div id={`story-${s.id}`} key={s.id}>
-                  <StoryCard story={s} alerted={false} onResearch={onResearch} />
-                </div>
-              ))}
+              {notable.map((s) => card(s, false))}
+            </section>
+          )}
+
+          {cleared.length > 0 && (
+            <section className="rounded-xl border border-line/60 bg-panel/50">
+              <button onClick={() => setShowDone((v) => !v)} className="flex w-full items-center justify-between px-3.5 py-3 text-left">
+                <span className="text-[13px] font-medium text-muted">✓ {cleared.length} done</span>
+                <span className="text-faint">{showDone ? "−" : "+"}</span>
+              </button>
+              {showDone && (
+                <ul className="divide-y divide-line/60 border-t border-line/60">
+                  {cleared.map((s) => (
+                    <li key={s.id} className="flex items-center gap-2 px-3.5 py-2">
+                      <span className="num w-[76px] shrink-0 text-[11px] font-medium text-muted">{s.symbol}</span>
+                      <span className="line-clamp-1 flex-1 text-[11.5px] text-faint">{s.headline}</span>
+                      <button onClick={() => restore(s.id)} className="text-[11px] text-accent">
+                        Undo
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </section>
           )}
 

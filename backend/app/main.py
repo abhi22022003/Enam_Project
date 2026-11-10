@@ -21,8 +21,11 @@ SYMBOLS = [p["symbol"] for p in PORTFOLIO]
 SECTOR = {p["symbol"]: p["sector"] for p in PORTFOLIO}
 
 
-def _window(window: str, start: date | None, end: date | None) -> tuple[datetime, datetime]:
+def _window(window: str, start: date | None, end: date | None, since: datetime | None = None) -> tuple[datetime, datetime]:
     now = datetime.now()
+    if since:
+        since = since.astimezone().replace(tzinfo=None) if since.tzinfo else since
+        return min(since, now - timedelta(hours=1)), now
     if start:
         e = datetime.combine(end or date.today(), time.max)
         return datetime.combine(start, time.min), min(e, now)
@@ -55,14 +58,15 @@ async def get_digest(
     window: str = "24h",
     start: date | None = None,
     end: date | None = None,
+    since: datetime | None = None,
     interests: str | None = None,
     vol_x: float = Query(2.0, ge=1.0, le=20),
     move_pct: float = Query(4.0, ge=0.5, le=50),
 ):
-    s, e = _window(window, start, end)
+    s, e = _window(window, start, end, since)
     ints = [x for x in (interests or "").split(",") if x in CATEGORIES] or None
     d = await run_in_threadpool(digest_mod.build_digest, SYMBOLS, s, e, ints, vol_x, move_pct)
-    d["window"]["label"] = window if not start else f"{s.date()} → {e.date()}"
+    d["window"]["label"] = "since last visit" if since else window if not start else f"{s.date()} → {e.date()}"
     return d
 
 

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { api, Enrichment, MgmtCard, ResultsCard, Story } from "@/lib/api";
+import { enrichCache } from "@/lib/enrichCache";
 import { ago, crore, pct, tone } from "@/lib/format";
 import { Skeleton, Tag } from "./ui";
 
@@ -120,14 +121,17 @@ function MgmtView({ card }: { card: MgmtCard }) {
 }
 
 export function useEnrichment(story: Story, auto: boolean) {
-  const [data, setData] = useState<Enrichment | null>(null);
+  const [data, setData] = useState<Enrichment | null>(() => enrichCache.get(story.id) ?? null);
   const [requested, setRequested] = useState(auto);
   useEffect(() => {
-    if (!requested) return;
+    if (!requested || enrichCache.has(story.id)) return;
     let alive = true;
     api
       .enrich(story)
-      .then((d) => alive && setData(d))
+      .then((d) => {
+        enrichCache.set(story.id, d);
+        if (alive) setData(d);
+      })
       .catch(() => alive && setData({ type: "summary", summary: null }));
     return () => {
       alive = false;
@@ -136,7 +140,19 @@ export function useEnrichment(story: Story, auto: boolean) {
   return { data, loading: requested && !data, request: () => setRequested(true), requested };
 }
 
-export function StoryCard({ story, alerted, onResearch }: { story: Story; alerted: boolean; onResearch: (s: string) => void }) {
+export function StoryCard({
+  story,
+  alerted,
+  onResearch,
+  onDone,
+  highlight = false,
+}: {
+  story: Story;
+  alerted: boolean;
+  onResearch: (s: string) => void;
+  onDone?: () => void;
+  highlight?: boolean;
+}) {
   const critical = story.tier === "critical";
   const { data, loading, request, requested } = useEnrichment(story, critical);
   const [showFilings, setShowFilings] = useState(false);
@@ -147,15 +163,21 @@ export function StoryCard({ story, alerted, onResearch }: { story: Story; alerte
   const oneLiner = summary ?? story.summary;
 
   return (
-    <article className={`fade-in rounded-xl border bg-panel p-3.5 ${critical ? "border-line" : "border-line/60"}`}>
-      <div className="flex items-center gap-2">
+    <article
+      className={`fade-in rounded-xl border bg-panel p-3.5 transition-shadow duration-300 ${critical ? "border-line" : "border-line/60"} ${
+        highlight ? "shadow-[0_0_0_2px_var(--color-accent)]" : ""
+      }`}
+    >
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <button onClick={() => onResearch(story.symbol)} className="num text-[12px] font-semibold tracking-tight text-ink">
           {story.symbol}
         </button>
         <CategoryTag category={story.category} label={story.category_label} />
         {alerted && <Tag className="bg-crit/15 text-crit">Alert</Tag>}
-        <span className="ml-auto whitespace-nowrap text-[10px] text-faint">{ago(story.time)}</span>
-        <Reaction r={story.price_reaction} />
+        <span className="ml-auto flex items-center gap-2">
+          <span className="whitespace-nowrap text-[10px] text-faint">{ago(story.time)}</span>
+          <Reaction r={story.price_reaction} />
+        </span>
       </div>
       <h3 className={`mt-1.5 line-clamp-3 leading-snug ${critical ? "text-[15px] font-semibold" : "text-[13.5px] font-medium text-ink/90"}`}>{headline}</h3>
 
@@ -193,8 +215,13 @@ export function StoryCard({ story, alerted, onResearch }: { story: Story; alerte
           </button>
         )}
         <button onClick={() => onResearch(story.symbol)} className="ml-auto text-muted hover:text-ink">
-          Research {story.symbol} →
+          Research →
         </button>
+        {onDone && (
+          <button onClick={onDone} className="rounded-md border border-line px-2 py-0.5 text-muted hover:text-ink" aria-label="Mark as done">
+            ✓ Done
+          </button>
+        )}
       </div>
       {showFilings && (
         <ul className="mt-2 space-y-1 border-t border-line pt-2">

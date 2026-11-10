@@ -73,6 +73,56 @@ function Search({ onPick, portfolio, demo }: { onPick: (s: string) => void; port
 
 type Msg = { role: "user" | "finn"; text: string; sources?: AskAnswer["sources"] };
 
+type Recognition = {
+  lang: string;
+  interimResults: boolean;
+  onresult: (e: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void;
+  onend: () => void;
+  onerror: () => void;
+  start: () => void;
+  stop: () => void;
+};
+
+function MicButton({ onText, disabled }: { onText: (t: string) => void; disabled: boolean }) {
+  const [listening, setListening] = useState(false);
+  const rec = useRef<Recognition | null>(null);
+  const Ctor =
+    typeof window !== "undefined"
+      ? ((window as unknown as { SpeechRecognition?: new () => Recognition; webkitSpeechRecognition?: new () => Recognition }).SpeechRecognition ??
+        (window as unknown as { webkitSpeechRecognition?: new () => Recognition }).webkitSpeechRecognition)
+      : undefined;
+  if (!Ctor) return null;
+  const toggle = () => {
+    if (listening) return rec.current?.stop();
+    const r = new Ctor();
+    r.lang = "en-IN";
+    r.interimResults = false;
+    r.onresult = (e) => {
+      const text = e.results[0]?.[0]?.transcript;
+      if (text) onText(text);
+    };
+    r.onend = () => setListening(false);
+    r.onerror = () => setListening(false);
+    rec.current = r;
+    setListening(true);
+    r.start();
+  };
+  return (
+    <button
+      type="button"
+      onClick={toggle}
+      disabled={disabled}
+      aria-label={listening ? "Stop listening" : "Ask by voice"}
+      className={`flex w-10 shrink-0 items-center justify-center rounded-xl border ${listening ? "animate-pulse border-down bg-down/20 text-down" : "border-line text-muted"} disabled:opacity-50`}
+    >
+      <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+        <rect x="9" y="3" width="6" height="11" rx="3" />
+        <path d="M5 11a7 7 0 0 0 14 0M12 18v3" strokeLinecap="round" />
+      </svg>
+    </button>
+  );
+}
+
 function AskSheet({ symbol, open, onClose }: { symbol: string; open: boolean; onClose: () => void }) {
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [q, setQ] = useState("");
@@ -140,7 +190,8 @@ function AskSheet({ symbol, open, onClose }: { symbol: string; open: boolean; on
         }}
         className="sticky bottom-0 mt-3 flex gap-2 bg-panel pt-2"
       >
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Ask anything about the calls…" className="flex-1 rounded-xl border border-line bg-panel-2 px-3 py-2.5 text-[13px] outline-none focus:border-accent/60" />
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Ask anything about the calls…" className="min-w-0 flex-1 rounded-xl border border-line bg-panel-2 px-3 py-2.5 text-[13px] outline-none focus:border-accent/60" />
+        <MicButton onText={send} disabled={busy} />
         <button disabled={busy} className="rounded-xl bg-accent px-3.5 text-[13px] font-medium text-bg disabled:opacity-50">
           Ask
         </button>

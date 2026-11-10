@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api, Holding } from "@/lib/api";
+import { api, Holding, Usage } from "@/lib/api";
 import { pct, tone } from "@/lib/format";
+import { enableNotifications, notifySupported } from "@/lib/notify";
 import { DEFAULT_SETTINGS, Settings } from "@/lib/settings";
 import { ErrorNote, Skeleton, Spark } from "./ui";
 
@@ -94,8 +95,9 @@ export default function WatchView({ settings, onSettings, onResearch }: { settin
             })}
           </div>
         </div>
-        <button onClick={() => onSettings({ ...DEFAULT_SETTINGS, window: settings.window })} className="text-[11px] text-faint underline">
-          Reset to defaults
+        <NotifyToggle on={settings.notify} onChange={(notify) => onSettings({ notify })} />
+        <button onClick={() => onSettings({ ...DEFAULT_SETTINGS, window: settings.window, notify: settings.notify })} className="text-[11px] text-faint underline">
+          Reset thresholds
         </button>
       </section>
 
@@ -133,6 +135,66 @@ export default function WatchView({ settings, onSettings, onResearch }: { settin
           </ul>
         )}
       </section>
+
+      <CostMeter />
     </div>
+  );
+}
+
+function NotifyToggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
+  const [msg, setMsg] = useState<string | null>(null);
+  const toggle = async () => {
+    if (on) return onChange(false);
+    if (!notifySupported()) return setMsg("This browser can't show notifications. On iPhone, add FINN to your Home Screen first.");
+    const ok = await enableNotifications();
+    if (ok) {
+      setMsg(null);
+      onChange(true);
+    } else setMsg("Notifications are blocked for this site in your browser settings.");
+  };
+  return (
+    <div>
+      <div className="flex items-center justify-between">
+        <div>
+          <div className="text-[13px]">Notify me on this device</div>
+          <p className="text-[11px] text-faint">Checks every 10 minutes while FINN is open or installed; each alert fires once.</p>
+        </div>
+        <button onClick={toggle} role="switch" aria-checked={on} aria-label="Notify me on this device" className={`relative h-6 w-11 shrink-0 rounded-full transition ${on ? "bg-accent" : "bg-white/10"}`}>
+          <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-ink transition-all ${on ? "left-[22px]" : "left-0.5"}`} />
+        </button>
+      </div>
+      {msg && <p className="mt-1.5 text-[11px] text-warn">{msg}</p>}
+    </div>
+  );
+}
+
+function CostMeter() {
+  const [h, setH] = useState<{ llm: boolean; usage: Usage } | null>(null);
+  useEffect(() => {
+    api.health().then(setH).catch(() => {});
+  }, []);
+  if (!h) return null;
+  const models = Object.entries(h.usage.by_model);
+  const tokens = models.reduce((n, [, m]) => n + m.prompt_tokens + m.completion_tokens, 0);
+  return (
+    <section className="rounded-xl border border-line/60 p-3.5 text-[11.5px] text-faint">
+      <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest">AI usage since server start</div>
+      <div className="flex gap-4">
+        <span>
+          <span className="num text-muted">{h.usage.calls}</span> model calls
+        </span>
+        <span>
+          <span className="num text-muted">{h.usage.cache_hits}</span> served from cache
+        </span>
+        <span>
+          <span className="num text-muted">{tokens.toLocaleString("en-IN")}</span> tokens
+        </span>
+      </div>
+      {models.map(([name, m]) => (
+        <div key={name} className="num mt-1 text-[10.5px]">
+          {name}: {m.calls} calls · {(m.prompt_tokens + m.completion_tokens).toLocaleString("en-IN")} tokens
+        </div>
+      ))}
+    </section>
   );
 }

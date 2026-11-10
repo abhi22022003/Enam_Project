@@ -26,7 +26,8 @@ export const api = {
   health: () => req<{ ok: boolean; llm: boolean; usage: Usage }>("/api/health"),
   digest: (p: DigestParams) => {
     const q = new URLSearchParams();
-    if (p.start) {
+    if (p.since) q.set("since", p.since);
+    else if (p.start) {
       q.set("start", p.start);
       if (p.end) q.set("end", p.end);
     } else q.set("window", p.window);
@@ -51,14 +52,14 @@ export const api = {
 export type Usage = { calls: number; cache_hits: number; by_model: Record<string, { calls: number; prompt_tokens: number; completion_tokens: number }> };
 
 export type Meta = {
-  portfolio: { symbol: string; sector: string }[];
+  portfolio: { symbol: string; name: string; sector: string }[];
   research_demo: string[];
   categories: Record<string, string>;
   default_interests: string[];
   llm: boolean;
 };
 
-export type DigestParams = { window: string; start?: string; end?: string; interests: string[]; volX: number; movePct: number };
+export type DigestParams = { window: string; since?: string; start?: string; end?: string; interests: string[]; volX: number; movePct: number };
 
 export type Filing = {
   id: string;
