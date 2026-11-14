@@ -56,7 +56,8 @@ For each item return:
 Use ONLY facts present in the item. Keep numbers exactly; you may restate 5,74,25,740 as 5.74 crore.
 Never invent amounts, names, reasons or outcomes. Neutral tone: no judgement words (major, rumours, setback,
 boost) unless the filing itself uses them. If the exchange asked the company a question, say so; do not imply
-the company has answered.
+the company has answered. Keep the stage exact: a term sheet, proposal or approval is not a completed deal
+("Agrees terms to sell ..." not "Sells ..."). Attach each date to the event the filing attaches it to.
 
 Return JSON: {{"items": [{{"id": "...", "title": "...", "gist": "..."}}]}}
 

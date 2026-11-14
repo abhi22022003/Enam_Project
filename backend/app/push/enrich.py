@@ -165,14 +165,14 @@ MONTHS = "jan feb mar apr may jun jul aug sep oct nov dec".split()
 
 
 def _month_year(label: str | None) -> tuple[int, int] | None:
-    """'30-09-2026', '30.09.2026', "30th Sep'26", 'Sep 2026' -> (8, 2026)."""
+    """'30-09-2026', '30.09.2026', "30th Sep'26", '30-Sep-26', 'Sep 2026' -> (8, 2026)."""
     low = (label or "").lower()
     num = re.search(r"\b\d{1,2}[./-](\d{1,2})[./-](\d{2,4})\b", low)
     if num:
         y = int(num.group(2))
         return int(num.group(1)) - 1, y + 2000 if y < 100 else y
     m = next((i for i, name in enumerate(MONTHS) if name in low), None)
-    y = re.search(r"20(\d\d)|'(\d\d)\b", low)
+    y = re.search(r"20(\d\d)|['-](\d\d)\b", low)
     return (m, 2000 + int(y.group(1) or y.group(2))) if m is not None and y else None
 
 
