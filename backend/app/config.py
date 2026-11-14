@@ -20,6 +20,8 @@ LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://generativelanguage.googleapis.
 LLM_API_KEY = os.getenv("LLM_API_KEY") or os.getenv("GEMINI_API_KEY", "")
 FAST_MODEL = os.getenv("FAST_MODEL", "gemini-3.5-flash-lite")
 SMART_MODEL = os.getenv("SMART_MODEL", "gemini-3.5-flash")
+# Tried in order when a model's daily quota is exhausted (free tier allows ~20 requests/day on flash).
+SMART_FALLBACKS = [m for m in os.getenv("SMART_FALLBACKS", "gemini-3-flash-preview").split(",") if m]
 # Thinking budget per tier; higher effort spent ~5x tokens on our prompts with no change in answers.
 FAST_REASONING = os.getenv("FAST_REASONING", "minimal")
 SMART_REASONING = os.getenv("SMART_REASONING", "low")

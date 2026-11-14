@@ -61,12 +61,19 @@ def business(symbol: str) -> dict:
     ts = co["documents"]["transcripts"]
     if not ts:
         return {"error": "No earnings-call transcript available on screener.in for this company."}
-    latest = ts[0]
-    key = latest["url"]
-    hit = cache.get_json("business", key)
+    hit = cache.get_json("business", ts[0]["url"])
     if hit:
         return hit
-    text = transcripts.transcript_text(latest["url"])
+    for latest in ts[:3]:
+        try:
+            text = transcripts.transcript_text(latest["url"])
+        except Exception:
+            continue
+        if text.strip():
+            break
+    else:
+        return {"error": "Could not read the latest earnings-call transcripts."}
+    key = ts[0]["url"]
     res = llm.complete_json(
         BUSINESS_PROMPT.format(name=co["name"], grounding=GROUNDING, period=latest["period"], text=text[:14000]),
         tier="fast",

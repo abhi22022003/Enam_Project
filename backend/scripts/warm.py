@@ -18,7 +18,7 @@ from app.push.digest import build_digest
 from app.push.enrich import enrich
 from app.sources import nse, prices
 
-SKIP_NAMESPACES = {"pdf"}
+SKIP_NAMESPACES = {"pdf", "pdf_text", "yfinance"}
 SYMBOLS = [p["symbol"] for p in PORTFOLIO]
 
 

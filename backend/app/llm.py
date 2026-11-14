@@ -14,7 +14,7 @@ import time
 import httpx
 
 from . import cache
-from .config import FAST_MODEL, FAST_REASONING, LLM_API_KEY, LLM_BASE_URL, SMART_MODEL, SMART_REASONING
+from .config import FAST_MODEL, FAST_REASONING, LLM_API_KEY, LLM_BASE_URL, SMART_FALLBACKS, SMART_MODEL, SMART_REASONING
 
 
 class LLMUnavailable(RuntimeError):
@@ -47,8 +47,17 @@ def _record(model: str, prompt_tokens: int, completion_tokens: int) -> None:
         m["completion_tokens"] += completion_tokens
 
 
+_exhausted: set[str] = set()
+
+
 def _model_for(tier: str) -> str:
     return SMART_MODEL if tier == "smart" else FAST_MODEL
+
+
+def _chain(tier: str) -> list[str]:
+    chain = [SMART_MODEL, *SMART_FALLBACKS, FAST_MODEL] if tier == "smart" else [FAST_MODEL]
+    live = [m for m in dict.fromkeys(chain) if m not in _exhausted]
+    return live or [chain[-1]]
 
 
 def complete(
@@ -59,10 +68,11 @@ def complete(
     json_mode: bool = False,
     max_tokens: int = 2048,
     use_cache: bool = True,
+    refresh: bool = False,
 ) -> str:
     model = _model_for(tier)
     key = json.dumps([model, system, prompt, json_mode, max_tokens])
-    if use_cache:
+    if use_cache and not refresh:
         hit = cache.get_json("llm", key)
         if hit is not None:
             with _usage_lock:
@@ -75,37 +85,42 @@ def complete(
     if system:
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": prompt})
-    body: dict = {"model": model, "messages": messages, "temperature": 0, "max_tokens": max_tokens}
     effort = SMART_REASONING if tier == "smart" else FAST_REASONING
-    if effort and "generativelanguage" in LLM_BASE_URL:
-        body["reasoning_effort"] = effort
-    if json_mode:
-        body["response_format"] = {"type": "json_object"}
 
     last_err: Exception | None = None
-    for attempt in range(4):
-        try:
-            r = httpx.post(
-                f"{LLM_BASE_URL.rstrip('/')}/chat/completions",
-                headers={"Authorization": f"Bearer {LLM_API_KEY}"},
-                json=body,
-                timeout=120,
-            )
-            if r.status_code in (429, 500, 502, 503):
-                time.sleep(2 * (attempt + 1) ** 2)
-                last_err = RuntimeError(f"LLM {r.status_code}: {r.text[:200]}")
-                continue
-            r.raise_for_status()
-            data = r.json()
-            text = data["choices"][0]["message"]["content"] or ""
-            u = data.get("usage") or {}
-            _record(model, u.get("prompt_tokens", 0), u.get("completion_tokens", 0))
-            if use_cache and text:
-                cache.set_json("llm", key, {"text": text})
-            return text
-        except httpx.HTTPError as e:
-            last_err = e
-            time.sleep(1 + attempt)
+    for candidate in _chain(tier):
+        body: dict = {"model": candidate, "messages": messages, "temperature": 0, "max_tokens": max_tokens}
+        if effort and "generativelanguage" in LLM_BASE_URL:
+            body["reasoning_effort"] = effort
+        if json_mode:
+            body["response_format"] = {"type": "json_object"}
+        for attempt in range(3):
+            try:
+                r = httpx.post(
+                    f"{LLM_BASE_URL.rstrip('/')}/chat/completions",
+                    headers={"Authorization": f"Bearer {LLM_API_KEY}"},
+                    json=body,
+                    timeout=120,
+                )
+                if r.status_code == 429 and "PerDay" in r.text:
+                    _exhausted.add(candidate)
+                    last_err = RuntimeError(f"LLM daily quota exhausted for {candidate}")
+                    break
+                if r.status_code in (429, 500, 502, 503):
+                    time.sleep(2 * (attempt + 1) ** 2)
+                    last_err = RuntimeError(f"LLM {r.status_code}: {r.text[:200]}")
+                    continue
+                r.raise_for_status()
+                data = r.json()
+                text = data["choices"][0]["message"]["content"] or ""
+                u = data.get("usage") or {}
+                _record(candidate, u.get("prompt_tokens", 0), u.get("completion_tokens", 0))
+                if use_cache and text:
+                    cache.set_json("llm", key, {"text": text})
+                return text
+            except httpx.HTTPError as e:
+                last_err = e
+                time.sleep(1 + attempt)
     raise RuntimeError(f"LLM call failed: {last_err}")
 
 
@@ -126,4 +141,8 @@ def parse_json(text: str):
 
 def complete_json(prompt: str, *, system: str = "", tier: str = "fast", max_tokens: int = 4096):
     text = complete(prompt, system=system, tier=tier, json_mode=True, max_tokens=max_tokens)
-    return parse_json(text)
+    try:
+        return parse_json(text)
+    except json.JSONDecodeError:
+        text = complete(prompt, system=system, tier=tier, json_mode=True, max_tokens=max_tokens, refresh=True)
+        return parse_json(text)
