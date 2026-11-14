@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { api, Digest, MarketAlert, Story } from "@/lib/api";
-import { buildBrief, estimateSeconds, Line, pickVoice } from "@/lib/brief";
+import { buildBrief, estimateSeconds, Line, pickVoice, shortName } from "@/lib/brief";
 import { ago, greeting, pct, shortDate, tone } from "@/lib/format";
 import { doneStories, lastSeen } from "@/lib/local";
 import { Settings } from "@/lib/settings";
-import { CategoryTag, StoryCard } from "./cards";
+import { CategoryTag, CompactStory, StoryCard } from "./cards";
 import { ErrorNote, Skeleton } from "./ui";
 
 const WINDOWS = [
@@ -74,32 +74,35 @@ function WindowPicker({
   );
 }
 
-function MoveCard({ a, onStory, onResearch }: { a: MarketAlert; onStory: (id: string) => void; onResearch: (s: string) => void }) {
+function MoveCard({ a, name, onStory, onResearch }: { a: MarketAlert; name: string; onStory: (id: string) => void; onResearch: (s: string) => void }) {
   return (
-    <div className="w-[200px] shrink-0 rounded-xl border border-line bg-panel p-3">
-      <div className="flex items-baseline justify-between">
-        <button onClick={() => onResearch(a.symbol)} className="num text-[12px] font-semibold">
-          {a.symbol}
-        </button>
-        <span className={`num text-[13px] font-semibold ${tone(a.change_pct)}`}>{pct(a.change_pct)}</span>
+    <div className={`flex w-[180px] shrink-0 flex-col rounded-2xl bg-panel p-3.5 ring-1 ${a.unexplained ? "ring-warn/40" : "ring-line"}`}>
+      <button onClick={() => onResearch(a.symbol)} className="text-left">
+        <div className="truncate text-[13px] font-semibold">{name}</div>
+        <div className="num text-[10px] text-faint">{shortDate(a.date)} close</div>
+      </button>
+      <div className={`num mt-2 text-[22px] font-semibold leading-none tracking-tight ${tone(a.change_pct)}`}>{pct(a.change_pct)}</div>
+      <div className="mt-1 text-[11px] text-muted">
+        {a.vol_ratio != null && a.vol_ratio >= 1.5 ? `${a.vol_ratio.toFixed(1)}× usual volume` : a.triggers[0]?.text}
       </div>
-      <div className="mt-0.5 text-[10px] text-faint">{shortDate(a.date)} close</div>
-      <ul className="mt-2 space-y-0.5">
-        {a.triggers.map((t) => (
-          <li key={t.kind} className="text-[11.5px] text-ink/90">
-            {t.text}
-          </li>
-        ))}
-      </ul>
-      <div className="mt-2 border-t border-line pt-2 text-[11px]">
+      <div className="mt-auto pt-2.5 text-[11.5px] leading-snug">
         {a.unexplained ? (
-          <span className="text-warn">No filing explains this move</span>
+          <span className="font-medium text-warn">No filing explains this</span>
         ) : (
           <button onClick={() => onStory(a.context[0].story_id)} className="line-clamp-2 text-left text-accent">
             Likely: {a.context[0].headline}
           </button>
         )}
       </div>
+    </div>
+  );
+}
+
+function SectionTitle({ children, count, tone: t = "text-faint" }: { children: ReactNode; count?: number; tone?: string }) {
+  return (
+    <div className="mb-2.5 flex items-center gap-2">
+      <h2 className={`text-[12px] font-semibold uppercase tracking-widest ${t}`}>{children}</h2>
+      {count != null && <span className="num rounded-full bg-white/5 px-2 py-px text-[11px] font-semibold text-muted">{count}</span>}
     </div>
   );
 }
@@ -233,9 +236,10 @@ export default function BriefView({
     setDone(doneStories.get());
   };
 
+  const nameOf = (s: { symbol: string; company?: string }) => names.get(s.symbol) ?? (s.company ? shortName(s.company) : s.symbol);
   const card = (s: Story, alerted: boolean) => (
     <div id={`story-${s.id}`} key={s.id}>
-      <StoryCard story={s} alerted={alerted} onResearch={onResearch} onDone={() => markDone(s.id)} highlight={reading?.storyId === s.id} />
+      <StoryCard story={s} name={nameOf(s)} alerted={alerted} onResearch={onResearch} onDone={() => markDone(s.id)} highlight={reading?.storyId === s.id} />
     </div>
   );
 
@@ -355,31 +359,39 @@ export default function BriefView({
 
           {moves.length > 0 && (
             <section>
-              <div className="mb-2 flex items-baseline justify-between">
-                <h2 className="text-[11px] font-semibold uppercase tracking-widest text-faint">Unusual moves</h2>
-                <span className="text-[10px] text-faint">
+              <div className="flex items-start justify-between">
+                <SectionTitle count={moves.length}>Unusual moves</SectionTitle>
+                <span className="pt-0.5 text-[10px] text-faint">
                   vol ≥ {settings.volX}× · move ≥ ±{settings.movePct}%
                 </span>
               </div>
-              <div className="no-scrollbar -mx-4 flex gap-2 overflow-x-auto px-4 pb-1">
+              <div className="no-scrollbar -mx-4 flex gap-2.5 overflow-x-auto px-4 pb-1">
                 {moves.map((a) => (
-                  <MoveCard key={a.id} a={a} onStory={scrollToStory} onResearch={onResearch} />
+                  <MoveCard key={a.id} a={a} name={nameOf(a)} onStory={scrollToStory} onResearch={onResearch} />
                 ))}
               </div>
             </section>
           )}
 
           {critical.length > 0 && (
-            <section className="space-y-2.5">
-              <h2 className="text-[11px] font-semibold uppercase tracking-widest text-crit">Needs your attention</h2>
-              {critical.map((s) => card(s, alertedStories.has(s.id)))}
+            <section>
+              <SectionTitle count={critical.length} tone="text-crit">
+                Needs your attention
+              </SectionTitle>
+              <div className="space-y-3">{critical.map((s) => card(s, alertedStories.has(s.id)))}</div>
             </section>
           )}
 
           {notable.length > 0 && (
-            <section className="space-y-2">
-              <h2 className="text-[11px] font-semibold uppercase tracking-widest text-faint">Worth knowing</h2>
-              {notable.map((s) => card(s, false))}
+            <section>
+              <SectionTitle count={notable.length}>Worth knowing</SectionTitle>
+              <div className="divide-y divide-line/60 overflow-hidden rounded-2xl bg-panel ring-1 ring-line">
+                {notable.map((s) => (
+                  <div id={`story-${s.id}`} key={s.id}>
+                    <CompactStory story={s} name={nameOf(s)} onResearch={onResearch} onDone={() => markDone(s.id)} />
+                  </div>
+                ))}
+              </div>
             </section>
           )}
 

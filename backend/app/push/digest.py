@@ -2,6 +2,7 @@ import re
 from datetime import date, datetime, timedelta
 
 from ..sources import nse, prices
+from . import headlines
 from .classify import CATEGORIES, classify
 
 CRITICAL, NOTABLE = 75, 40
@@ -181,6 +182,7 @@ def build_digest(
 
     px = prices.snapshot(symbols)
     stories = build_stories(rows, interests_set, px)
+    headlines.apply(stories, allow_llm=allow_llm)
     m_alerts = market_alerts(px, start, end, vol_x, move_pct, stories)
     f_alerts = filing_alerts(stories, interests_set)
 

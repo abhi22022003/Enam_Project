@@ -85,6 +85,8 @@ export type Story = {
   score: number;
   tier: "critical" | "notable" | "routine";
   headline: string;
+  subject?: string;
+  gist?: string | null;
   summary: string | null;
   time: string;
   price_reaction: { date: string; change_pct: number | null; vol_ratio: number | null } | null;

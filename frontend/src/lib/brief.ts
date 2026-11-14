@@ -3,7 +3,7 @@ import { enrichCache } from "./enrichCache";
 
 export type Line = { text: string; storyId?: string };
 
-const shortName = (company: string) =>
+export const shortName = (company: string) =>
   company
     .replace(/\b(Limited|Ltd\.?|Company|Corporation|Industries|India)\b/gi, "")
     .replace(/\(.*?\)/g, "")
@@ -58,8 +58,7 @@ function storyLine(s: Story, names: Map<string, string>): string {
   const e = enrichCache.get(s.id);
   if (e?.type === "results" && !e.error && e.table?.length) return resultsLine(name, s, e) + reaction(s);
   if (e?.type === "management_change" && e.headline) return `${name}: ${e.headline}.` + reaction(s);
-  const summary = e?.type === "summary" && e.summary ? e.summary : null;
-  return `${name}, ${s.category_label.toLowerCase()}: ${firstClause(summary ?? s.headline, summary ? 24 : 16)}.` + reaction(s);
+  return `${name}, ${s.category_label.toLowerCase()}: ${firstClause(s.headline, 16)}.` + reaction(s);
 }
 
 function moveLine(a: MarketAlert, names: Map<string, string>): string {
