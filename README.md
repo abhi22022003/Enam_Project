@@ -32,7 +32,7 @@ frontend/ (Next.js, mobile-first)          backend/ (FastAPI)
            ─ /api/research/{sym}/ask  ─▶  BM25 over transcript chunks + financial tables → cited answer
   Watch  ── /api/portfolio            ─▶  sources/prices (yfinance EOD)
 
-sources/  nse.py (corporate-announcements API) · screener.py (financials + document links) · pdf.py (PyMuPDF) · prices.py
+sources/  nse.py (corporate-announcements API) · screener.py (financials + document links) · pdf.py (pdfium) · prices.py
 ```
 
 ### Cost discipline (the whole demo runs on Gemini's free tier)
@@ -73,8 +73,11 @@ Open on a phone on the same Wi-Fi: `npm run dev -- -H 0.0.0.0` and visit `http:/
 
 ## Deploy
 
-- Backend: Render (`render.yaml`, Docker) with `GEMINI_API_KEY` set.
-- Frontend: Vercel, root `frontend/`, env `BACKEND_URL=https://<render-url>` (and `NEXT_PUBLIC_API_URL` to the same for long research calls).
+Both halves run on Vercel's free tier.
+
+- Backend: `cd backend && vercel deploy --prod` (FastAPI via `api/index.py`, Mumbai region so NSE sees an Indian IP, cache in `/tmp`, snapshot bundled). Set `GEMINI_API_KEY` in the project's environment variables.
+- Frontend: `cd frontend && vercel deploy --prod` with `NEXT_PUBLIC_API_URL=https://<backend-url>`.
+- Alternative: `render.yaml` + `backend/Dockerfile` for a long-running container.
 
 ## Portfolio
 

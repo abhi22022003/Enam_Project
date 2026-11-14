@@ -334,6 +334,25 @@ export default function BriefView({
 
       {data && !loading && (
         <>
+          {open.length + cleared.length === 0 && moves.length === 0 && (mode.kind !== "window" || settings.window !== "30d") && (
+            <section className="fade-in rounded-xl border border-line/60 bg-panel p-4 text-[13px] text-muted">
+              <p>
+                No filings and no unusual moves {windowLabel}
+                {[0, 6].includes(new Date(data.window.end).getDay()) ? ". Exchanges are shut for the weekend." : "."}
+              </p>
+              <button
+                onClick={() => {
+                  const w = mode.kind === "window" && settings.window === "7d" ? "30d" : "7d";
+                  setMode({ kind: "window" });
+                  onSettings({ window: w });
+                }}
+                className="mt-3 rounded-full bg-accent px-3.5 py-1.5 text-[12px] font-semibold text-bg"
+              >
+                Show the last {mode.kind === "window" && settings.window === "7d" ? "30" : "7"} days
+              </button>
+            </section>
+          )}
+
           {moves.length > 0 && (
             <section>
               <div className="mb-2 flex items-baseline justify-between">

@@ -1,0 +1,7 @@
+.venv
+.cache
+.env
+scripts
+Dockerfile
+__pycache__
+.env.local

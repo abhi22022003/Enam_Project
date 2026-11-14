@@ -4,6 +4,9 @@ import pandas as pd
 import yfinance as yf
 
 from .. import cache
+from ..config import CACHE_DIR
+
+yf.set_tz_cache_location(str(CACHE_DIR / "yfinance"))
 
 AVG_WINDOW = 20
 
@@ -31,10 +34,17 @@ def _download(symbols: list[str]) -> dict:
 
 def history(symbols: list[str]) -> dict[str, list[dict]]:
     key = ",".join(sorted(symbols))
+    fresh = cache.get_json("prices", key, 3600)
+    if fresh:
+        return fresh
     try:
-        return cache.cached_json("prices", key, 3600, lambda: _download(symbols))
+        data = _download(symbols)
     except Exception:
-        return cache.get_json("prices", key) or {}
+        data = {}
+    if data:
+        cache.set_json("prices", key, data)
+        return data
+    return cache.get_json("prices", key) or {}
 
 
 def day_metrics(series: list[dict]) -> list[dict]:

@@ -1,4 +1,4 @@
-import pymupdf as fitz
+import pypdfium2 as pdfium
 
 from .. import cache
 from ..http import client
@@ -30,10 +30,18 @@ def pages(url: str, max_pages: int | None = None) -> list[str]:
     hit = cache.get_json("pdf_text", key)
     if hit is not None:
         return hit
-    data = download(url)
-    with fitz.open(stream=data, filetype="pdf") as doc:
+    doc = pdfium.PdfDocument(download(url))
+    try:
         n = len(doc) if max_pages is None else min(len(doc), max_pages)
-        texts = [doc[i].get_text("text") for i in range(n)]
+        texts = []
+        for i in range(n):
+            page = doc[i]
+            textpage = page.get_textpage()
+            texts.append(textpage.get_text_bounded().replace("\r\n", "\n"))
+            textpage.close()
+            page.close()
+    finally:
+        doc.close()
     cache.set_json("pdf_text", key, texts)
     return texts
 

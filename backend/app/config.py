@@ -1,12 +1,18 @@
 import os
+import time
 from pathlib import Path
 
 from dotenv import load_dotenv
 
+# NSE timestamps and the 15:30 market close are IST; cloud hosts default to UTC.
+os.environ["TZ"] = "Asia/Kolkata"
+time.tzset()
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
 
-CACHE_DIR = Path(os.getenv("FINN_CACHE_DIR", BASE_DIR / ".cache"))
+# Serverless hosts only allow writes under /tmp.
+CACHE_DIR = Path(os.getenv("FINN_CACHE_DIR") or ("/tmp/finn-cache" if os.getenv("VERCEL") else BASE_DIR / ".cache"))
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 # Any OpenAI-compatible endpoint works. Default is Gemini's free tier.
