@@ -14,7 +14,7 @@ import time
 import httpx
 
 from . import cache
-from .config import FAST_MODEL, LLM_API_KEY, LLM_BASE_URL, SMART_MODEL
+from .config import FAST_MODEL, FAST_REASONING, LLM_API_KEY, LLM_BASE_URL, SMART_MODEL, SMART_REASONING
 
 
 class LLMUnavailable(RuntimeError):
@@ -76,6 +76,9 @@ def complete(
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": prompt})
     body: dict = {"model": model, "messages": messages, "temperature": 0, "max_tokens": max_tokens}
+    effort = SMART_REASONING if tier == "smart" else FAST_REASONING
+    if effort and "generativelanguage" in LLM_BASE_URL:
+        body["reasoning_effort"] = effort
     if json_mode:
         body["response_format"] = {"type": "json_object"}
 

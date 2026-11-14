@@ -142,6 +142,57 @@ def _from_screener(symbol: str) -> dict | None:
     return {"periods": periods, "is_lender": is_lender, "basis": "consolidated" if co["consolidated"] else "standalone"}
 
 
+def _filing_card(res: dict, target: dict, picked: list[tuple[int, str]]) -> dict:
+    mult = UNIT_TO_CRORE.get(str(res.get("unit", "crore")).lower().split()[-1], 1.0)
+    periods = {}
+    for p in res["periods"]:
+        f = {k: (float(p.get(k) or 0) * mult) for k in ("revenue", "other_income", "finance_costs", "depreciation", "pbt", "pat")}
+        f["ebitda"] = f["pbt"] + f["finance_costs"] + f["depreciation"] - f["other_income"]
+        f = {k: round(v, 1) for k, v in f.items()}
+        f["label"] = p.get("label")
+        periods[p["role"]] = f
+    return {
+        "source": "filing",
+        "source_url": target["url"],
+        "source_pages": [i + 1 for i, _ in picked],
+        "basis": res.get("basis"),
+        "is_lender": bool(res.get("is_lender")),
+        "periods": periods,
+    }
+
+
+MONTHS = "jan feb mar apr may jun jul aug sep oct nov dec".split()
+
+
+def _month_year(label: str | None) -> tuple[int, int] | None:
+    """'30-09-2026', '30.09.2026', "30th Sep'26", 'Sep 2026' -> (8, 2026)."""
+    low = (label or "").lower()
+    num = re.search(r"\b\d{1,2}[./-](\d{1,2})[./-](\d{2,4})\b", low)
+    if num:
+        y = int(num.group(2))
+        return int(num.group(1)) - 1, y + 2000 if y < 100 else y
+    m = next((i for i, name in enumerate(MONTHS) if name in low), None)
+    y = re.search(r"20(\d\d)|'(\d\d)\b", low)
+    return (m, 2000 + int(y.group(1) or y.group(2))) if m is not None and y else None
+
+
+def _cross_check(card: dict, ref: dict | None) -> dict | None:
+    """Compare against screener.in, but only when both describe the same quarter."""
+    if not ref:
+        return None
+    cur, cur_ref = card["periods"]["current"], ref["periods"]["current"]
+    a, b = _month_year(cur.get("label")), _month_year(cur_ref.get("label"))
+    if not a or a != b:
+        return None
+    rev_ok, pat_ok = _pct(cur["revenue"], cur_ref["revenue"]), _pct(cur["pat"], cur_ref["pat"])
+    return {
+        "against": f"screener.in {cur_ref['label']}",
+        "revenue_diff_pct": rev_ok,
+        "pat_diff_pct": pat_ok,
+        "agrees": rev_ok is not None and abs(rev_ok) <= 3 and pat_ok is not None and abs(pat_ok) <= 5,
+    }
+
+
 def results_card(symbol: str, filings: list[dict]) -> dict:
     target = _pick_results_filing(filings)
     key = f"{symbol}|{target['url'] if target else ''}"
@@ -157,47 +208,29 @@ def results_card(symbol: str, filings: list[dict]) -> dict:
             picked = _results_pages(pages)
             if picked:
                 text = "\n\n".join(f"[page {i + 1}]\n{t}" for i, t in picked)[:16000]
-                res = None
                 for tier in ("fast", "smart"):
                     try:
                         res = llm.complete_json(RESULTS_PROMPT.format(text=text), tier=tier)
                     except Exception:
-                        res = None
-                    if res and _valid(res):
+                        continue
+                    if not _valid(res):
+                        continue
+                    card = _filing_card(res, target, picked)
+                    check = _cross_check(card, ref)
+                    if check:
+                        card["cross_check"] = check
+                    if not check or check["agrees"]:
                         break
-                    res = None
-                if res:
-                    mult = UNIT_TO_CRORE.get(str(res.get("unit", "crore")).lower().split()[-1], 1.0)
-                    periods = {}
-                    for p in res["periods"]:
-                        f = {k: (float(p.get(k) or 0) * mult) for k in ("revenue", "other_income", "finance_costs", "depreciation", "pbt", "pat")}
-                        f["ebitda"] = f["pbt"] + f["finance_costs"] + f["depreciation"] - f["other_income"]
-                        f = {k: round(v, 1) for k, v in f.items()}
-                        f["label"] = p.get("label")
-                        periods[p["role"]] = f
-                    card = {
-                        "source": "filing",
-                        "source_url": target["url"],
-                        "source_pages": [i + 1 for i, _ in picked],
-                        "basis": res.get("basis"),
-                        "is_lender": bool(res.get("is_lender")),
-                        "periods": periods,
-                    }
         except Exception:
             card = None
 
-    if card and ref:
-        cur_ref = ref["periods"]["current"]
-        cur = card["periods"]["current"]
-        rev_ok = _pct(cur["revenue"], cur_ref["revenue"])
-        pat_ok = _pct(cur["pat"], cur_ref["pat"])
-        card["cross_check"] = {
-            "against": f"screener.in {cur_ref['label']}",
-            "revenue_diff_pct": rev_ok,
-            "pat_diff_pct": pat_ok,
-            "agrees": rev_ok is not None and abs(rev_ok) <= 3 and pat_ok is not None and abs(pat_ok) <= 5,
+    if card and card.get("cross_check") and not card["cross_check"]["agrees"]:
+        card = {
+            "source": "screener",
+            "source_url": target["url"] if target else None,
+            "note": "The filing's figures did not reconcile with screener.in (e.g. gross vs net revenue), so screener.in's are shown.",
+            **ref,
         }
-
     if not card and ref:
         card = {"source": "screener", "source_url": target["url"] if target else None, **ref}
     if not card:

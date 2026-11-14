@@ -140,6 +140,7 @@ export type ResultsCard = {
   periods: Record<string, { label: string }>;
   table: ResultsRow[];
   ebitda_note: string;
+  note?: string;
   cross_check?: { against: string; revenue_diff_pct: number | null; pat_diff_pct: number | null; agrees: boolean };
 };
 

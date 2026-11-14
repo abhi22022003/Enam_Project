@@ -18,8 +18,11 @@ CACHE_DIR.mkdir(parents=True, exist_ok=True)
 # Any OpenAI-compatible endpoint works. Default is Gemini's free tier.
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai")
 LLM_API_KEY = os.getenv("LLM_API_KEY") or os.getenv("GEMINI_API_KEY", "")
-FAST_MODEL = os.getenv("FAST_MODEL", "gemini-2.5-flash-lite")
-SMART_MODEL = os.getenv("SMART_MODEL", "gemini-2.5-flash")
+FAST_MODEL = os.getenv("FAST_MODEL", "gemini-3.5-flash-lite")
+SMART_MODEL = os.getenv("SMART_MODEL", "gemini-3.5-flash")
+# Thinking budget per tier; higher effort spent ~5x tokens on our prompts with no change in answers.
+FAST_REASONING = os.getenv("FAST_REASONING", "minimal")
+SMART_REASONING = os.getenv("SMART_REASONING", "low")
 
 USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "

@@ -51,7 +51,7 @@ function ResultsView({ card }: { card: ResultsCard }) {
             Read from filing p.{card.source_pages?.join(", ")}
           </a>
         ) : (
-          <span>From screener.in quarterly table</span>
+          <span title={card.note}>From screener.in quarterly table{card.note && " ⓘ"}</span>
         )}
         {card.cross_check && (
           <span className={card.cross_check.agrees ? "text-up" : "text-warn"}>

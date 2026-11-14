@@ -7,6 +7,7 @@
 import shutil
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 
 from app import llm
@@ -42,21 +43,23 @@ def main(quick: bool) -> None:
     for days in (1, 3, 7, 30):
         print(f"Digest {days}d")
         d = step(f"digest {days}d", build_digest, SYMBOLS, now - timedelta(days=days), now)
-        if not d or days > 7:
+        if not d:
             continue
         for s in d["stories"]:
-            step(f"enrich {s['symbol']} {s['category']}", enrich, s)
+            if days <= 7 or s["category"] in ("results", "management_change"):
+                step(f"enrich {s['symbol']} {s['category']}", enrich, s)
 
     if quick:
         return
     print("Research")
-    for s in SYMBOLS + RESEARCH_DEMO:
+
+    def dossier(s: str) -> None:
         step(f"overview {s}", research.overview, s)
-    for s in RESEARCH_DEMO + ["TITAN", "TCS", "DIXON", "HDFCBANK"]:
-        for section in ("business", "promises", "bullbear"):
+        for section in ("business", "promises", "bullbear", "governance"):
             step(f"{section} {s}", getattr(research, section), s)
-    for s in RESEARCH_DEMO[:2]:
-        step(f"governance {s}", research.governance, s)
+
+    with ThreadPoolExecutor(4) as pool:
+        list(pool.map(dossier, RESEARCH_DEMO + SYMBOLS))
 
 
 def snapshot() -> None:
