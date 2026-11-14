@@ -4,6 +4,15 @@ A mobile-first agent that reads everything filed about your portfolio so you rea
 
 - **Push / Brief**: for any window (24h, 3D, 7D, 30D, custom), every NSE filing across an 18-stock portfolio is classified, grouped into stories, ranked, and the routine ~70% is collapsed. Unusual end-of-day moves (your thresholds) are joined to the filing that likely explains them, or flagged as *unexplained*.
 - **Pull / Research**: for **any NSE ticker**, a dossier grounded only in primary sources. The hero view is **Promised vs. Delivered**: every guidance statement from the last five earnings calls, checked against what the company actually reported.
+- **Watch**: your own thresholds (volume ×, price %), which filing types should alert you, and device notifications.
+
+### Interaction model
+
+- **Since your last visit** is the default window, so the brief is always "what's new for me", not "the last 24 hours".
+- **Triage, like an inbox**: mark a story *Done* and the headline count drops; done items stay retrievable (with undo).
+- **Listen**: a ~1-minute spoken brief (on-device speech, zero cost) that scrolls to and highlights each card as it is read: a commute mode for a phone-first user.
+- **Ask by voice** in Research; answers cite the transcript or table they came from.
+- Installable as a PWA; notifications fire once per alert while the app is open or installed.
 
 ## The point of view
 
