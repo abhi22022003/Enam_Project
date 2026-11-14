@@ -1,9 +1,13 @@
+import threading
+
 import pypdfium2 as pdfium
 
 from .. import cache
 from ..http import client
 
 MAX_BYTES = 40 * 1024 * 1024
+# PDFium is not thread-safe; concurrent parsing crashes the process.
+_pdfium_lock = threading.Lock()
 
 
 def download(url: str) -> bytes:
@@ -30,18 +34,20 @@ def pages(url: str, max_pages: int | None = None) -> list[str]:
     hit = cache.get_json("pdf_text", key)
     if hit is not None:
         return hit
-    doc = pdfium.PdfDocument(download(url))
-    try:
-        n = len(doc) if max_pages is None else min(len(doc), max_pages)
-        texts = []
-        for i in range(n):
-            page = doc[i]
-            textpage = page.get_textpage()
-            texts.append(textpage.get_text_bounded().replace("\r\n", "\n"))
-            textpage.close()
-            page.close()
-    finally:
-        doc.close()
+    data = download(url)
+    with _pdfium_lock:
+        doc = pdfium.PdfDocument(data)
+        try:
+            n = len(doc) if max_pages is None else min(len(doc), max_pages)
+            texts = []
+            for i in range(n):
+                page = doc[i]
+                textpage = page.get_textpage()
+                texts.append(textpage.get_text_bounded().replace("\r\n", "\n"))
+                textpage.close()
+                page.close()
+        finally:
+            doc.close()
     cache.set_json("pdf_text", key, texts)
     return texts
 
