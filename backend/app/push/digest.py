@@ -128,7 +128,13 @@ def market_alerts(px: dict, start: datetime, end: datetime, vol_x: float, move_p
                 if s["symbol"] == sym
                 and s["tier"] != "routine"
                 and timedelta(days=0) <= dd - datetime.fromisoformat(s["time"]).date() <= timedelta(days=2)
-            ]
+            ][:3]
+            if not context:
+                attribution, attribution_label = "unexplained", "No filing explains this"
+            elif len(context) == 1:
+                attribution, attribution_label = "linked", f"Likely: {context[0]['headline']}"
+            else:
+                attribution, attribution_label = "ambiguous", f"{len(context)} filings that day — unclear which"
             mag = max((d["vol_ratio"] or 0) / vol_x, abs(d["change_pct"] or 0) / move_pct)
             alerts.append(
                 {
@@ -141,7 +147,9 @@ def market_alerts(px: dict, start: datetime, end: datetime, vol_x: float, move_p
                     "vol_ratio": d["vol_ratio"],
                     "triggers": triggers,
                     "context": context[:2],
-                    "unexplained": not context,
+                    "unexplained": attribution == "unexplained",
+                    "attribution": attribution,
+                    "attribution_label": attribution_label,
                     "severity": round(mag, 2),
                 }
             )
@@ -194,6 +202,8 @@ def build_digest(
 
     return {
         "window": {"start": start.isoformat(), "end": end.isoformat()},
+        "as_of": end.isoformat(timespec="minutes"),
+        "generated_at": datetime.now().isoformat(timespec="minutes"),
         "counts": {
             "filings": len(rows),
             "stories": len(stories),

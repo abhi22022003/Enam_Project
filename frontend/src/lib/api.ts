@@ -75,6 +75,8 @@ export type Filing = {
   classified_by?: string;
 };
 
+export type StoryStatus = "proposed" | "pending" | "completed" | "clarification" | "unknown";
+
 export type Story = {
   id: string;
   symbol: string;
@@ -88,6 +90,9 @@ export type Story = {
   subject?: string;
   gist?: string | null;
   summary: string | null;
+  status?: StoryStatus;
+  status_label?: string | null;
+  confidence?: "high" | "medium" | "low";
   time: string;
   price_reaction: { date: string; change_pct: number | null; vol_ratio: number | null } | null;
   filings: Filing[];
@@ -104,6 +109,8 @@ export type MarketAlert = {
   triggers: { kind: string; text: string }[];
   context: { story_id: string; headline: string; category_label: string }[];
   unexplained: boolean;
+  attribution?: "linked" | "ambiguous" | "unexplained";
+  attribution_label?: string;
   severity: number;
 };
 
@@ -111,6 +118,8 @@ export type FilingAlert = { id: string; kind: "filing"; symbol: string; story_id
 
 export type Digest = {
   window: { start: string; end: string; label: string };
+  as_of?: string;
+  generated_at?: string;
   counts: { filings: number; stories: number; critical: number; notable: number; routine_filings: number; companies_with_news: number };
   alerts: (MarketAlert | FilingAlert)[];
   stories: Story[];
@@ -130,15 +139,33 @@ export type ResultsRow = {
   margin_year_ago: number | null;
 };
 
+export type LenderExtraRow = {
+  metric: string;
+  kind: "pct" | "money";
+  current: number;
+  previous: number | null;
+  year_ago: number | null;
+  qoq_pct: number | null;
+  yoy_pct: number | null;
+  qoq_pp: number | null;
+  yoy_pp: number | null;
+};
+
 export type ResultsCard = {
   type: "results";
   error?: string;
-  source: "filing" | "screener";
-  source_url: string | null;
+  source?: "filing" | "screener";
+  source_url?: string | null;
   source_pages?: number[];
   basis: string;
   is_lender: boolean;
   unit: string;
+  period_kind?: "quarter" | "half_year" | "other";
+  audit_status?: "audited" | "reviewed" | "unaudited" | "unknown";
+  one_off?: { amount_cr: number | null; note: string; adjusted_pbt: number | null } | null;
+  takeaway?: string | null;
+  confidence?: "high" | "medium" | "low";
+  lender_extras?: { source: string; label: string; rows: LenderExtraRow[] } | null;
   periods: Record<string, { label: string }>;
   table: ResultsRow[];
   ebitda_note: string;
@@ -150,6 +177,7 @@ export type MgmtChange = {
   person: string;
   role: string;
   change: string;
+  status?: "completed" | "pending" | "proposed";
   effective_date: string | null;
   reason: string | null;
   background: string | null;
@@ -159,8 +187,22 @@ export type MgmtChange = {
   source_url: string;
 };
 
-export type MgmtCard = { type: "management_change"; changes: MgmtChange[]; headline: string | null; llm?: boolean };
-export type SummaryCard = { type: "summary"; summary: string | null; key_figure?: string | null; source?: string };
+export type MgmtCard = {
+  type: "management_change";
+  changes: MgmtChange[];
+  headline: string | null;
+  llm?: boolean;
+  status?: string | null;
+  confidence?: "high" | "medium" | "low";
+};
+export type SummaryCard = {
+  type: "summary";
+  summary: string | null;
+  key_figure?: string | null;
+  source?: string;
+  status?: StoryStatus;
+  confidence?: "high" | "medium" | "low";
+};
 export type Enrichment = ResultsCard | MgmtCard | SummaryCard;
 
 export type Holding = {

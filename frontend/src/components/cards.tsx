@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { ReactNode, useEffect, useState } from "react";
 import { api, Enrichment, MgmtCard, ResultsCard, Story } from "@/lib/api";
 import { enrichCache } from "@/lib/enrichCache";
 import { ago, crore, pct, tone } from "@/lib/format";
@@ -53,20 +53,103 @@ function resultsHeadline(story: Story, card: ResultsCard): string | null {
   return `${period}: ${parts.join(", ")} YoY`;
 }
 
+const PERIOD_CHIP: Record<string, string> = { quarter: "Quarter", half_year: "Half-year", other: "Period" };
+const AUDIT_CHIP: Record<string, string> = { audited: "Audited", reviewed: "Reviewed", unaudited: "Unaudited" };
+
+function Chip({ children, tip }: { children: ReactNode; tip?: string }) {
+  return (
+    <span title={tip} className="rounded-md bg-white/5 px-1.5 py-0.5 text-[10px] font-medium text-muted">
+      {children}
+    </span>
+  );
+}
+
+function StatusPill({ status, label }: { status?: string | null; label?: string | null }) {
+  if (!status || status === "unknown" || !label) return null;
+  const tone =
+    status === "clarification" || status === "pending"
+      ? "bg-warn/15 text-warn"
+      : status === "proposed"
+        ? "bg-accent/15 text-accent"
+        : "bg-up/15 text-up";
+  return <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${tone}`}>{label}</span>;
+}
+
 function ResultsView({ card }: { card: ResultsCard }) {
-  if (card.error) return <p className="mt-2 text-[12px] text-muted">{card.error}</p>;
+  if (card.error) {
+    return (
+      <p className="mt-2 text-[12px] text-muted">
+        {card.error} {card.source_url && (
+          <a href={card.source_url} target="_blank" rel="noreferrer" className="text-accent">
+            Open filing ↗
+          </a>
+        )}
+      </p>
+    );
+  }
   return (
     <div className="mt-3">
+      <div className="mb-2 flex flex-wrap gap-1.5">
+        <Chip tip="All figures shown in ₹ crore">₹ Cr</Chip>
+        {card.basis && <Chip tip="Consolidated includes subsidiaries; standalone is the parent only">{card.basis}</Chip>}
+        {card.period_kind && <Chip tip="Do not mix quarter figures with half-year figures">{PERIOD_CHIP[card.period_kind] ?? card.period_kind}</Chip>}
+        {card.audit_status && card.audit_status !== "unknown" && <Chip>{AUDIT_CHIP[card.audit_status]}</Chip>}
+        {card.periods.current?.label && <Chip>{card.periods.current.label}</Chip>}
+      </div>
+
+      {card.one_off && (
+        <div className="mb-2 rounded-xl border border-warn/30 bg-warn/10 px-3 py-2 text-[12px] leading-snug text-ink/90">
+          <span className="font-semibold text-warn">One-off · </span>
+          {card.one_off.note}
+          {card.one_off.adjusted_pbt != null && (
+            <span className="mt-0.5 block text-muted">
+              PBT ex-exceptional ≈ <span className="num font-medium text-ink">{crore(card.one_off.adjusted_pbt)}</span> Cr
+            </span>
+          )}
+        </div>
+      )}
+
       <div className="grid grid-cols-2 gap-2">
         {card.table.map((r) => (
           <MetricTile key={r.metric} r={r} />
         ))}
       </div>
+
+      {card.lender_extras?.rows?.length ? (
+        <div className="mt-2 grid grid-cols-2 gap-2">
+          {card.lender_extras.rows.map((r) => (
+            <div key={r.metric} className="rounded-xl bg-panel-2 px-3 py-2.5" title={`From ${card.lender_extras!.source} · ${card.lender_extras!.label}`}>
+              <div className="text-[11px] font-medium text-muted">{r.metric}</div>
+              <div className="num mt-0.5 text-[17px] font-semibold tracking-tight text-ink">
+                {r.kind === "pct" ? `${r.current.toFixed(2)}%` : crore(r.current)}
+              </div>
+              <div className="mt-0.5 flex gap-1.5 text-[11px]">
+                {r.yoy_pp != null && (
+                  <span className={tone(r.yoy_pp)}>
+                    {r.yoy_pp > 0 ? "+" : ""}
+                    {r.yoy_pp.toFixed(2)}pp YoY
+                  </span>
+                )}
+                {r.qoq_pp != null && (
+                  <span className={`text-faint ${tone(r.qoq_pp)}`}>
+                    {r.qoq_pp > 0 ? "+" : ""}
+                    {r.qoq_pp.toFixed(2)}pp QoQ
+                  </span>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {card.takeaway && (
+        <p className="mt-2 rounded-xl bg-white/[0.03] px-3 py-2 text-[12.5px] leading-relaxed text-muted">
+          <span className="font-medium text-ink/80">Worth noting · </span>
+          {card.takeaway}
+        </p>
+      )}
+
       <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10.5px] text-faint">
-        <span>
-          ₹ Cr · {card.basis} · {card.periods.current?.label}
-        </span>
-        <span>·</span>
         {card.source === "filing" ? (
           <a href={card.source_url ?? "#"} target="_blank" rel="noreferrer" className="underline decoration-dotted">
             from filing p.{card.source_pages?.join(", ")}
@@ -77,6 +160,11 @@ function ResultsView({ card }: { card: ResultsCard }) {
         {card.cross_check && (
           <span className={card.cross_check.agrees ? "text-up" : "text-warn"}>
             {card.cross_check.agrees ? "✓ matches" : "≠ differs from"} {card.cross_check.against}
+          </span>
+        )}
+        {card.confidence && card.confidence !== "high" && (
+          <span className="text-warn" title="Figures come from a secondary source or could not be fully reconciled">
+            {card.confidence} confidence
           </span>
         )}
         {!card.is_lender && <span title={card.ebitda_note}>EBITDA ⓘ</span>}
@@ -136,9 +224,16 @@ function MgmtView({ card }: { card: MgmtCard }) {
                 <div className="text-[14px] font-semibold leading-snug">{plainName(c.person)}</div>
                 <div className="line-clamp-2 text-[11.5px] leading-snug text-muted">{c.role}</div>
               </div>
-              <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10.5px] font-medium capitalize ${exit ? "bg-down/15 text-down" : "bg-up/15 text-up"}`}>
-                {c.change}
-              </span>
+              <div className="flex shrink-0 flex-col items-end gap-1">
+                <span className={`rounded-full px-2 py-0.5 text-[10.5px] font-medium capitalize ${exit ? "bg-down/15 text-down" : "bg-up/15 text-up"}`}>
+                  {c.change}
+                </span>
+                {c.status && c.status !== "completed" && (
+                  <span className="rounded-full bg-warn/15 px-2 py-0.5 text-[9.5px] font-semibold text-warn">
+                    {c.status === "pending" ? "Pending approval" : "Proposed"}
+                  </span>
+                )}
+              </div>
             </div>
             {c.background && <p className="mt-2 line-clamp-4 text-[12.5px] leading-relaxed text-ink/85">{c.background}</p>}
             {c.reason && exit && <p className="mt-1.5 text-[11.5px] text-muted">Reason: {c.reason}</p>}
@@ -194,7 +289,35 @@ function storyText(story: Story, data: Enrichment | null, name: string) {
         ? (resultsHeadline(story, data) ?? story.headline)
         : story.headline;
   const gist = (data?.type === "summary" ? data.summary : null) ?? story.gist ?? story.summary;
-  return { headline, gist: data?.type === "results" || data?.type === "management_change" ? null : gist };
+  const status =
+    (data?.type === "management_change" && data.status) ||
+    (data?.type === "summary" && data.status) ||
+    story.status ||
+    null;
+  const statusLabel =
+    status === "pending"
+      ? "Pending approval"
+      : status === "proposed"
+        ? "Proposed"
+        : status === "clarification"
+          ? "Clarification sought"
+          : status === "completed"
+            ? "Completed"
+            : story.status_label || null;
+  return { headline, gist: data?.type === "results" || data?.type === "management_change" ? null : gist, status, statusLabel };
+}
+
+function whyOnBrief(story: Story, alerted: boolean): string {
+  const bits: string[] = [];
+  if (alerted) bits.push("matches your alert types");
+  if (story.tier === "critical") bits.push("high-impact filing");
+  if (story.price_reaction?.change_pct != null && Math.abs(story.price_reaction.change_pct) >= 2) {
+    bits.push(`stock moved ${pct(story.price_reaction.change_pct)} around the filing`);
+  } else if (story.price_reaction?.vol_ratio != null && story.price_reaction.vol_ratio >= 2) {
+    bits.push(`${story.price_reaction.vol_ratio.toFixed(1)}× usual volume`);
+  }
+  if (!bits.length) bits.push(`${story.category_label.toLowerCase()} in your portfolio`);
+  return bits.join(" · ");
 }
 
 function Actions({ story, onResearch, onDone, onSummarise }: { story: Story; onResearch: (s: string) => void; onDone?: () => void; onSummarise?: () => void }) {
@@ -241,8 +364,9 @@ export function StoryCard({
   const needsCard = story.category === "results" || story.category === "management_change" || !(story.gist || story.summary);
   const { data, loading } = useEnrichment(story, needsCard);
   const [more, setMore] = useState(false);
+  const [why, setWhy] = useState(false);
   const cat = catStyle(story.category);
-  const { headline, gist } = storyText(story, data, name);
+  const { headline, gist, status, statusLabel } = storyText(story, data, name);
 
   return (
     <article
@@ -254,9 +378,10 @@ export function StoryCard({
       <div className="p-4 pl-5">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <div className="flex items-center gap-2 text-[10.5px] font-semibold uppercase tracking-wider">
+            <div className="flex flex-wrap items-center gap-2 text-[10.5px] font-semibold uppercase tracking-wider">
               <span className={cat.text}>{story.category_label}</span>
               {alerted && <span className="rounded-full bg-crit/15 px-1.5 py-px text-[9.5px] text-crit">Alert</span>}
+              <StatusPill status={status} label={statusLabel} />
               <span className="font-normal normal-case tracking-normal text-faint">{ago(story.time)}</span>
             </div>
             <button onClick={() => onResearch(story.symbol)} className="mt-1 flex items-baseline gap-1.5 text-left">
@@ -275,6 +400,9 @@ export function StoryCard({
           </p>
         )}
         {data?.type === "summary" && data.key_figure && <p className="num mt-1.5 text-[12.5px] font-medium text-accent">{data.key_figure}</p>}
+        {data?.type === "summary" && data.confidence === "low" && (
+          <p className="mt-1 text-[11px] text-warn">Low confidence — open the filing to verify.</p>
+        )}
 
         {loading && (
           <div className="mt-3 grid grid-cols-2 gap-2">
@@ -284,6 +412,11 @@ export function StoryCard({
         )}
         {data?.type === "results" && <ResultsView card={data} />}
         {data?.type === "management_change" && <MgmtView card={data} />}
+
+        <button onClick={() => setWhy((v) => !v)} className="mt-2.5 text-[11px] text-faint hover:text-muted">
+          {why ? "Hide" : "Why is this here?"}
+        </button>
+        {why && <p className="mt-1 text-[11.5px] leading-snug text-muted">{whyOnBrief(story, alerted)}</p>}
 
         <div className="mt-3 border-t border-line/60 pt-2.5">
           <Actions story={story} onResearch={onResearch} onDone={onDone} />
@@ -307,18 +440,19 @@ export function CompactStory({
   const [open, setOpen] = useState(false);
   const { data, loading, request, requested } = useEnrichment(story, false);
   const cat = catStyle(story.category);
-  const { headline, gist } = storyText(story, data, name);
+  const { headline, gist, status, statusLabel } = storyText(story, data, name);
 
   return (
     <div className="px-4 py-3">
       <button onClick={() => setOpen((o) => !o)} className="flex w-full items-start gap-3 text-left" aria-expanded={open}>
         <span className={`mt-[7px] h-2 w-2 shrink-0 rounded-full ${cat.bar}`} />
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1.5 text-[11px]">
+          <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
             <span className="font-semibold text-ink/90">{name}</span>
             <span className="truncate text-faint">
               · {story.category_label} · {ago(story.time)}
             </span>
+            {status && status !== "unknown" && status !== "completed" && <StatusPill status={status} label={statusLabel} />}
           </div>
           <div className="mt-0.5 line-clamp-2 text-[14.5px] font-medium leading-snug text-ink">{headline}</div>
         </div>

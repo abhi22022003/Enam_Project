@@ -59,11 +59,19 @@ Take three columns: the latest quarter, the immediately preceding quarter, and t
 Report numbers exactly as printed in the table's unit (do not convert). Negative numbers stay negative.
 - revenue: "Revenue from operations" (for banks: "Interest earned" / total interest income; for NBFCs: revenue from operations)
 - other_income, finance_costs, depreciation: as printed (0 if absent)
+- exceptional: "Exceptional items" for the CURRENT quarter only (income positive, expense negative; 0 if blank/absent)
 - pbt: profit before tax (after exceptional items)
 - pat: net profit for the period (total, before minority/non-controlling split)
+- period_kind: "quarter" if these are three-months figures, "half_year" if six-months / H1, else "other"
+- audit_status: "audited" | "reviewed" | "unaudited" | "unknown" from the statement heading
+- one_off_note: if notes or line items near the P&L name a material one-off in the CURRENT quarter
+  (customs duty, impairment, fair-value gain, tax credit, provision write-back), one short phrase with the amount; else null.
+  Do NOT invent. Prefer the exceptional line when present.
 
 Return JSON:
 {{"basis": "consolidated|standalone", "unit": "crore|lakh|million|thousand", "is_lender": bool,
+  "period_kind": "quarter|half_year|other", "audit_status": "audited|reviewed|unaudited|unknown",
+  "exceptional": n, "one_off_note": str|null,
   "periods": [{{"role": "current|previous_quarter|year_ago_quarter", "label": "e.g. Sep 30, 2026",
                "revenue": n, "other_income": n, "finance_costs": n, "depreciation": n, "pbt": n, "pat": n}}]}}
 
@@ -113,6 +121,66 @@ def _metrics_table(periods: dict, is_lender: bool) -> list[dict]:
     return rows
 
 
+def _lender_extras(symbol: str) -> dict | None:
+    """Bank/NBFC extras from screener.in quarterly rows (NPA, financing margin)."""
+    try:
+        co = screener.company(symbol)
+    except Exception:
+        return None
+    q = (co.get("tables") or {}).get("quarters")
+    if not q or "Financing Profit" not in (q.get("rows") or {}):
+        return None
+    rows, i = q["rows"], -1
+    out = {"source": "screener.in", "label": q["periods"][i]}
+    for key, label, kind in (
+        ("Financing Margin %", "Financing margin", "pct"),
+        ("Gross NPA %", "Gross NPA", "pct"),
+        ("Net NPA %", "Net NPA", "pct"),
+    ):
+        vals = rows.get(key) or []
+        if not vals or vals[i] is None:
+            continue
+        cur, prev, yago = vals[i], vals[i - 1] if len(vals) > 1 else None, vals[i - 4] if len(vals) > 4 else None
+        out.setdefault("rows", []).append(
+            {
+                "metric": label,
+                "kind": kind,
+                "current": cur,
+                "previous": prev,
+                "year_ago": yago,
+                "qoq_pct": None if kind == "pct" else _pct(cur, prev),
+                "yoy_pct": None if kind == "pct" else _pct(cur, yago),
+                "qoq_pp": round(cur - prev, 2) if kind == "pct" and prev is not None else None,
+                "yoy_pp": round(cur - yago, 2) if kind == "pct" and yago is not None else None,
+            }
+        )
+    return out if out.get("rows") else None
+
+
+def _takeaway(card: dict) -> str | None:
+    """One educational line — never buy/sell advice."""
+    cur = card["periods"]["current"]
+    pat_row = next((r for r in card["table"] if r["metric"] == "PAT"), None)
+    rev_row = next((r for r in card["table"] if r["metric"] == "Revenue"), None)
+    bits = []
+    if card.get("one_off"):
+        bits.append(f"Includes a one-off: {card['one_off']['note']}. Look past the headline profit.")
+    elif pat_row and pat_row.get("yoy_pct") is not None and rev_row and rev_row.get("yoy_pct") is not None:
+        if pat_row["yoy_pct"] - rev_row["yoy_pct"] >= 25:
+            bits.append("Profit grew much faster than revenue — check margins and one-offs before extrapolating.")
+        elif rev_row["yoy_pct"] - pat_row["yoy_pct"] >= 25:
+            bits.append("Revenue grew faster than profit — margins compressed versus last year.")
+    if card.get("is_lender") and card.get("lender_extras"):
+        npa = next((r for r in card["lender_extras"]["rows"] if r["metric"] == "Gross NPA"), None)
+        if npa and npa.get("qoq_pp") is not None and npa["qoq_pp"] >= 0.15:
+            bits.append("Gross NPA rose versus last quarter — watch asset quality.")
+    if card.get("period_kind") == "half_year":
+        bits.append("These are half-year figures, not a single quarter.")
+    if card.get("basis") == "standalone":
+        bits.append("Standalone only — subsidiaries are not included.")
+    return bits[0] if bits else None
+
+
 def _from_screener(symbol: str) -> dict | None:
     try:
         co = screener.company(symbol)
@@ -139,7 +207,13 @@ def _from_screener(symbol: str) -> dict | None:
         }
 
     periods = {"current": at(-1), "previous_quarter": at(-2), "year_ago_quarter": at(-5)}
-    return {"periods": periods, "is_lender": is_lender, "basis": "consolidated" if co["consolidated"] else "standalone"}
+    return {
+        "periods": periods,
+        "is_lender": is_lender,
+        "basis": "consolidated" if co["consolidated"] else "standalone",
+        "period_kind": "quarter",
+        "audit_status": "unknown",
+    }
 
 
 def _filing_card(res: dict, target: dict, picked: list[tuple[int, str]]) -> dict:
@@ -151,13 +225,26 @@ def _filing_card(res: dict, target: dict, picked: list[tuple[int, str]]) -> dict
         f = {k: round(v, 1) for k, v in f.items()}
         f["label"] = p.get("label")
         periods[p["role"]] = f
+    exceptional = round(float(res.get("exceptional") or 0) * mult, 1)
+    note = (res.get("one_off_note") or "").strip() or None
+    one_off = None
+    if abs(exceptional) >= 1 or note:
+        one_off = {
+            "amount_cr": exceptional if abs(exceptional) >= 1 else None,
+            "note": note or (f"Exceptional items ₹{abs(exceptional):,.0f} Cr" + (" income" if exceptional > 0 else " expense")),
+            "adjusted_pbt": round(periods["current"]["pbt"] - exceptional, 1) if abs(exceptional) >= 1 else None,
+        }
     return {
         "source": "filing",
         "source_url": target["url"],
         "source_pages": [i + 1 for i, _ in picked],
         "basis": res.get("basis"),
         "is_lender": bool(res.get("is_lender")),
+        "period_kind": res.get("period_kind") or "quarter",
+        "audit_status": res.get("audit_status") or "unknown",
+        "one_off": one_off,
         "periods": periods,
+        "confidence": "high",
     }
 
 
@@ -193,9 +280,30 @@ def _cross_check(card: dict, ref: dict | None) -> dict | None:
     }
 
 
+def _finalize_results(symbol: str, card: dict) -> dict:
+    card["type"] = "results"
+    card["unit"] = "₹ Cr"
+    card.setdefault("period_kind", "quarter")
+    card.setdefault("audit_status", "unknown")
+    card["table"] = _metrics_table(card["periods"], card.get("is_lender", False))
+    if card.get("is_lender"):
+        card["lender_extras"] = _lender_extras(symbol)
+    card["ebitda_note"] = (
+        "Not meaningful for lenders — use financing margin and NPA below."
+        if card.get("is_lender")
+        else "EBITDA = PBT + finance costs + depreciation − other income."
+        if card.get("source") == "filing"
+        else "Operating profit as reported by screener.in (≈ EBITDA)."
+    )
+    if not card.get("confidence"):
+        card["confidence"] = "medium" if card.get("source") == "screener" else "high"
+    card["takeaway"] = _takeaway(card)
+    return card
+
+
 def results_card(symbol: str, filings: list[dict]) -> dict:
     target = _pick_results_filing(filings)
-    key = f"{symbol}|{target['url'] if target else ''}"
+    key = f"v2|{symbol}|{target['url'] if target else ''}"
     hit = cache.get_json("results_card", key)
     if hit:
         return hit
@@ -229,23 +337,21 @@ def results_card(symbol: str, filings: list[dict]) -> dict:
             "source": "screener",
             "source_url": target["url"] if target else None,
             "note": "The filing's figures did not reconcile with screener.in (e.g. gross vs net revenue), so screener.in's are shown.",
+            "confidence": "medium",
+            "one_off": card.get("one_off"),
             **ref,
         }
     if not card and ref:
-        card = {"source": "screener", "source_url": target["url"] if target else None, **ref}
+        card = {"source": "screener", "source_url": target["url"] if target else None, "confidence": "medium", **ref}
     if not card:
-        return {"type": "results", "error": "Could not read numbers from this filing."}
+        return {
+            "type": "results",
+            "error": "Could not read numbers from this filing.",
+            "confidence": "low",
+            "source_url": target["url"] if target else None,
+        }
 
-    card["type"] = "results"
-    card["unit"] = "₹ Cr"
-    card["table"] = _metrics_table(card["periods"], card.get("is_lender", False))
-    card["ebitda_note"] = (
-        "Not meaningful for lenders."
-        if card.get("is_lender")
-        else "EBITDA = PBT + finance costs + depreciation − other income."
-        if card["source"] == "filing"
-        else "Operating profit as reported by screener.in (≈ EBITDA)."
-    )
+    card = _finalize_results(symbol, card)
     cache.set_json("results_card", key, card)
     return card
 
@@ -256,10 +362,14 @@ MGMT_PROMPT = """From this Indian stock-exchange filing about a management/board
 Use ONLY the text. Indian filings usually include a "brief profile" of appointees: use it for background.
 Return JSON:
 {{"changes": [{{"person": str, "role": str, "change": "appointed|resigned|retired|re-appointed|redesignated|ceased|demise",
+   "status": "completed|pending|proposed",
    "effective_date": str|null, "reason": str|null,
    "background": "2 short sentences: current/previous employers, years of experience, notable roles; null if not in filing",
    "education": str|null, "previous_roles": [str]}}],
  "headline": "<= 14 words, e.g. 'CFO Jane Doe resigns; John Roe (ex-Unilever) to take over'"}}
+
+status rules: "pending" if still needs shareholder / RBI / court approval; "proposed" if only recommended;
+"completed" if already effective or fully approved. Prefer exact stage language.
 
 FILING TEXT:
 {text}"""
@@ -284,13 +394,20 @@ def management_card(symbol: str, company: str, filings: list[dict]) -> dict:
         for c in res.get("changes", []):
             if not c.get("person"):
                 continue
+            c["status"] = c.get("status") or "completed"
             c["linkedin_search"] = "https://www.linkedin.com/search/results/people/?keywords=" + quote_plus(
                 f"{c['person']} {company}"
             )
             c["source_url"] = f["url"]
             changes.append(c)
         headline = headline or res.get("headline")
-    card = {"type": "management_change", "changes": changes, "headline": headline}
+    card = {
+        "type": "management_change",
+        "changes": changes,
+        "headline": headline,
+        "confidence": "high" if changes else "low",
+        "status": next((c["status"] for c in changes if c.get("status") == "pending"), changes[0]["status"] if changes else None),
+    }
     cache.set_json("mgmt_card", key, card)
     return card
 
@@ -300,29 +417,55 @@ def management_card(symbol: str, company: str, filings: list[dict]) -> dict:
 SUMMARY_PROMPT = """Summarise this Indian stock-exchange filing for a busy portfolio investor in ONE line (<= 22 words).
 State the concrete fact (what, how much, when). No adjectives, no "the company informed".
 If it carries numbers (order value, stake %, rating, amount), include them.
-Return JSON: {{"summary": str, "key_figure": str|null}}
+If the amount/counterparty is not disclosed, say "amount not disclosed" rather than guessing.
+Return JSON: {{"summary": str, "key_figure": str|null, "status": "proposed|pending|completed|clarification|unknown",
+  "confidence": "high|medium|low"}}
 
 {text}"""
 
 
 def summary_card(filing: dict) -> dict:
     if filing.get("nse_summary"):
-        return {"type": "summary", "summary": filing["nse_summary"], "source": "nse"}
+        return {
+            "type": "summary",
+            "summary": filing["nse_summary"],
+            "source": "nse",
+            "confidence": "medium",
+            "status": _infer_status(filing.get("subject") or "", filing.get("nse_summary") or ""),
+        }
     if filing.get("summary"):
-        return {"type": "summary", "summary": filing["summary"], "source": "llm"}
+        return {"type": "summary", "summary": filing["summary"], "source": "llm", "confidence": "medium"}
     hit = cache.get_json("summary_card", filing["id"])
     if hit:
         return hit
     if not llm.available() or not filing.get("url"):
-        return {"type": "summary", "summary": None}
+        return {"type": "summary", "summary": None, "confidence": "low", "status": _infer_status(filing.get("subject") or "", "")}
     try:
         text = pdf.text(filing["url"], max_pages=3, max_chars=7000)
         res = llm.complete_json(SUMMARY_PROMPT.format(text=text), tier="fast")
-        card = {"type": "summary", "summary": res.get("summary"), "key_figure": res.get("key_figure"), "source": "llm"}
+        card = {
+            "type": "summary",
+            "summary": res.get("summary"),
+            "key_figure": res.get("key_figure"),
+            "source": "llm",
+            "status": res.get("status") or _infer_status(filing.get("subject") or "", text[:800]),
+            "confidence": res.get("confidence") or "medium",
+        }
     except Exception:
-        return {"type": "summary", "summary": None}
+        return {"type": "summary", "summary": None, "confidence": "low"}
     cache.set_json("summary_card", filing["id"], card)
     return card
+
+
+def _infer_status(subject: str, details: str = "") -> str:
+    t = f"{subject} {details}".lower()
+    if re.search(r"clarification|sought|seeks clarification|news item", t):
+        return "clarification"
+    if re.search(r"term sheet|proposed|proposes|intend(s|ed)? to|subject to (the )?approval|pending (shareholder|rbi|nclt|court)", t):
+        return "pending" if "subject to" in t or "pending" in t else "proposed"
+    if re.search(r"allot(ted|ment)|incorporat(ed|ion)|retire[ds]?|resign(ed|ation)|complet(ed|ion)|set aside|struck off", t):
+        return "completed"
+    return "unknown"
 
 
 def enrich(story: dict) -> dict:

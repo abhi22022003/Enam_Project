@@ -75,8 +75,13 @@ function WindowPicker({
 }
 
 function MoveCard({ a, name, onStory, onResearch }: { a: MarketAlert; name: string; onStory: (id: string) => void; onResearch: (s: string) => void }) {
+  const attribution = a.attribution ?? (a.unexplained ? "unexplained" : "linked");
   return (
-    <div className={`flex w-[180px] shrink-0 flex-col rounded-2xl bg-panel p-3.5 ring-1 ${a.unexplained ? "ring-warn/40" : "ring-line"}`}>
+    <div
+      className={`flex w-[180px] shrink-0 flex-col rounded-2xl bg-panel p-3.5 ring-1 ${
+        attribution === "unexplained" ? "ring-warn/40" : attribution === "ambiguous" ? "ring-accent/30" : "ring-line"
+      }`}
+    >
       <button onClick={() => onResearch(a.symbol)} className="text-left">
         <div className="truncate text-[13px] font-semibold">{name}</div>
         <div className="num text-[10px] text-faint">{shortDate(a.date)} close</div>
@@ -86,11 +91,15 @@ function MoveCard({ a, name, onStory, onResearch }: { a: MarketAlert; name: stri
         {a.vol_ratio != null && a.vol_ratio >= 1.5 ? `${a.vol_ratio.toFixed(1)}× usual volume` : a.triggers[0]?.text}
       </div>
       <div className="mt-auto pt-2.5 text-[11.5px] leading-snug">
-        {a.unexplained ? (
-          <span className="font-medium text-warn">No filing explains this</span>
+        {attribution === "unexplained" ? (
+          <span className="font-medium text-warn">{a.attribution_label ?? "No filing explains this"}</span>
+        ) : attribution === "ambiguous" ? (
+          <button onClick={() => a.context[0] && onStory(a.context[0].story_id)} className="line-clamp-2 text-left font-medium text-accent">
+            {a.attribution_label ?? "Multiple filings that day"}
+          </button>
         ) : (
           <button onClick={() => onStory(a.context[0].story_id)} className="line-clamp-2 text-left text-accent">
-            Likely: {a.context[0].headline}
+            {a.attribution_label ?? `Likely: ${a.context[0].headline}`}
           </button>
         )}
       </div>
@@ -301,6 +310,14 @@ export default function BriefView({
                 </>
               )}
               .
+              {data.as_of && (
+                <span className="mt-0.5 block text-[11px]">
+                  As of {new Date(data.as_of).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+                  {data.generated_at && data.generated_at !== data.as_of && (
+                    <> · refreshed {new Date(data.generated_at).toLocaleString("en-IN", { hour: "2-digit", minute: "2-digit" })}</>
+                  )}
+                </span>
+              )}
             </p>
           )}
         </div>

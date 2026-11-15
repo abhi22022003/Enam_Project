@@ -14,6 +14,14 @@ from .. import cache, llm
 
 BATCH = 15
 
+STATUS_LABELS = {
+    "proposed": "Proposed",
+    "pending": "Pending approval",
+    "completed": "Completed",
+    "clarification": "Clarification sought",
+    "unknown": None,
+}
+
 
 def _indian_number(m: re.Match) -> str:
     n = int(m.group().replace(",", ""))
@@ -42,6 +50,19 @@ def tidy(subject: str) -> str:
     return s[:1].upper() + s[1:] if s else subject
 
 
+def infer_status(subject: str, details: str = "") -> str:
+    t = f"{subject} {details}".lower()
+    if re.search(r"clarification|sought|seeks clarification|news item captioned", t):
+        return "clarification"
+    if re.search(r"subject to (the )?(approval|shareholder|rbi)|pending (shareholder|rbi|nclt|court|approval)", t):
+        return "pending"
+    if re.search(r"term sheet|proposed|proposes|intend(s|ed)? to|binding term", t):
+        return "proposed"
+    if re.search(r"allot(ted|ment)|incorporat(ed|ion)|retire[ds]?|resign(ed|ation)|complet(ed|ion)|set aside|struck off|re-?appoint", t):
+        return "completed"
+    return "unknown"
+
+
 PROMPT = """Rewrite Indian stock-exchange filing subjects into headlines a retail investor understands at a glance.
 
 For each item return:
@@ -51,7 +72,9 @@ For each item return:
   not what the document is ("Disclosure", "Intimation").
 - gist: one sentence of at most 20 words adding the most useful concrete fact from DETAILS that the title does
   not already say (amount, price, counterparty, person, reason). Do not restate the title. If there is no such
-  fact, return "".
+  fact, return "". If the filing omits the amount, say "Amount not disclosed in the filing."
+- status: one of proposed|pending|completed|clarification|unknown
+  (proposed = term sheet / intent; pending = needs further approval; completed = done; clarification = exchange asked)
 
 Use ONLY facts present in the item. Keep numbers exactly; you may restate 5,74,25,740 as 5.74 crore.
 Never invent amounts, names, reasons or outcomes. Neutral tone: no judgement words (major, rumours, setback,
@@ -59,7 +82,7 @@ boost) unless the filing itself uses them. If the exchange asked the company a q
 the company has answered. Keep the stage exact: a term sheet, proposal or approval is not a completed deal
 ("Agrees terms to sell ..." not "Sells ..."). Attach each date to the event the filing attaches it to.
 
-Return JSON: {{"items": [{{"id": "...", "title": "...", "gist": "..."}}]}}
+Return JSON: {{"items": [{{"id": "...", "title": "...", "gist": "...", "status": "..."}}]}}
 
 ITEMS:
 {items}"""
@@ -67,7 +90,7 @@ ITEMS:
 
 def _key(story: dict) -> str:
     f = story["filings"][0]
-    raw = json.dumps([story["category"], f.get("subject"), (f.get("text") or "")[:500], f.get("nse_summary")])
+    raw = json.dumps(["v2", story["category"], f.get("subject"), (f.get("text") or "")[:500], f.get("nse_summary")])
     return hashlib.sha256(raw.encode()).hexdigest()[:24]
 
 
@@ -92,24 +115,36 @@ def _rewrite(batch: list[dict]) -> dict[str, dict]:
     for it in res.get("items", []) if isinstance(res, dict) else []:
         title = (it.get("title") or "").strip()
         if it.get("id") and 3 <= len(title) <= 90:
-            out[it["id"]] = {"title": title, "gist": (it.get("gist") or "").strip()}
+            status = it.get("status") if it.get("status") in STATUS_LABELS else "unknown"
+            out[it["id"]] = {"title": title, "gist": (it.get("gist") or "").strip(), "status": status}
     for k, v in out.items():
         cache.set_json("headline", k, v)
     return out
 
 
 def apply(stories: list[dict], allow_llm: bool = True) -> None:
-    """Set plain-English `headline` (raw kept in `subject`) and `gist` on non-routine stories."""
+    """Set plain-English `headline` (raw kept in `subject`), `gist` and `status` on non-routine stories."""
     todo = []
     for s in stories:
-        s["subject"] = s["filings"][0].get("subject")
+        f = s["filings"][0]
+        s["subject"] = f.get("subject")
+        details = " ".join(x for x in (f.get("nse_summary"), f.get("text")) if x)
+        s["status"] = infer_status(f.get("subject") or "", details)
+        s["status_label"] = STATUS_LABELS.get(s["status"])
         if s["category"] == "results" or s["tier"] == "routine":
             continue
         hit = cache.get_json("headline", _key(s))
         if hit:
             s["headline"], s["gist"] = hit["title"], hit.get("gist") or None
+            if hit.get("status") in STATUS_LABELS:
+                s["status"] = hit["status"]
+                s["status_label"] = STATUS_LABELS[hit["status"]]
         else:
             s["headline"] = tidy(s["headline"])
+            # Vague boilerplate subjects: be honest until a PDF summary arrives
+            if re.fullmatch(r"(bagging/receiving of orders/contracts|issue of securities|transcript|disclosure)", (f.get("subject") or "").strip(), re.I):
+                s["gist"] = s.get("gist") or "Details not in the exchange subject — open the filing."
+                s["confidence"] = "low"
             todo.append(s)
 
     if not todo or not allow_llm or not llm.available():
@@ -124,3 +159,6 @@ def apply(stories: list[dict], allow_llm: bool = True) -> None:
         r = results.get(_key(s))
         if r:
             s["headline"], s["gist"] = r["title"], r["gist"] or None
+            if r.get("status") in STATUS_LABELS:
+                s["status"] = r["status"]
+                s["status_label"] = STATUS_LABELS[r["status"]]
